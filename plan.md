@@ -30,6 +30,8 @@ Inclus :
 - signature manuscrite simple (image), signalée comme sans valeur électronique ;
 - pages : pivoter, supprimer, déplacer, insérer depuis un autre PDF ;
 - annuler/rétablir, enregistrer, enregistrer sous, imprimer ;
+- exporter en JPG la page affichée ou toutes les pages (150 ou 300 ppp), telles
+  qu'affichées (annotations, champs, signatures visibles) ;
 - installateur Windows pour tous les utilisateurs du poste (Program Files,
   droits d'administrateur ; `/CURRENTUSER` pour les essais), entrée « Ouvrir
   avec ».
@@ -82,6 +84,8 @@ recomposition, horodatage par défaut (réglage facultatif), PAdES-LTA
 - Recette : Edge sans fenêtre piloté par le protocole DevTools
   (`scripts\cdp.py`, `scripts\recette.ps1`), certificat de test en mémoire.
 - Paquet : PyInstaller en mode dossier (démarrage rapide) et Inno Setup.
+- Release : `scripts\release.ps1` ; chaque release GitHub `vX.Y.Z` porte son
+  installateur, construit et vérifié par `build.ps1` (demande de Florent).
 
 ## Phases
 
@@ -104,8 +108,18 @@ recomposition, horodatage par défaut (réglage facultatif), PAdES-LTA
   (CNG) est valide pour pyHanko (intégrité, couverture complète) ; une
   annulation de saisie du PIN produit un message clair sans fichier partiel.
 - Signer un document déjà signé conserve la première signature valide.
-- Le cadre visible se lit comme celui d'Acrobat : nom à gauche, « Signature
-  numérique de … » et « Date : AAAA.MM.JJ HH:MM:SS +HH'MM' » à droite (test).
+- Le cadre visible reproduit la mise en page d'Acrobat : nom à gauche rempli au
+  plus grand (coupé dans le mot si besoin), « Signature numérique de … » et
+  « Date : AAAA.MM.JJ HH:MM:SS +HH'MM' » à droite remplis au plus grand, noir,
+  Segoe UI ; comparé au cadre d'un PDF signé par Acrobat (mêmes retours à la
+  ligne). Ni logo ni police d'Adobe (marque et licence d'Adobe).
+- Comme Acrobat, une contresignature laisse la signature précédente « valide » ;
+  une annotation, une valeur de champ ou une métadonnée modifiée ensuite la rend
+  « à vérifier » en nommant le champ (tests). Une signature d'Acrobat (PKCS#7,
+  état archivé dans la signature) est reconnue « LTV » comme dans Acrobat.
+- Export JPG : une image par page à 150 ou 300 ppp, résolution inscrite dans le
+  fichier, très grande page réduite et signalée (tests, recette).
+- Aucune release GitHub sans son installateur vérifié (`scripts\release.ps1`).
 - Avec une autorité qui publie ses listes de révocation, le document signé
   contient leur état et la chaîne se vérifie hors ligne ; autorité injoignable :
   signature sans LTV après un seul PIN ; certificat révoqué : refus sans PIN

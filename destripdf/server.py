@@ -46,6 +46,8 @@ class Dialogs(Protocol):
 
     def save_pdf(self, directory: str, filename: str) -> str | None: ...
 
+    def save_jpeg(self, directory: str, filename: str) -> str | None: ...
+
 
 class ApiError(Exception):
     def __init__(self, message: str, code: str = "error", status: int = 400, extra: dict | None = None):
@@ -714,6 +716,56 @@ class Handler(BaseHTTPRequestHandler):
         self._after_save(session)
         self._done(summary)
 
+    EXPORT_DPI = (150, 300)
+
+    def api_export_jpeg(self, query):
+        """Pages en images JPG : la page affichée, ou toutes, numérotées d'après le nom choisi."""
+        from .document import atomic_write
+
+        body = self._json_body()
+        session = self.app.require_session()
+        count = session.page_count
+        if body.get("scope") == "all":
+            pages = list(range(count))
+        else:
+            try:
+                page = int(body.get("page", 0))
+            except (TypeError, ValueError):
+                page = -1
+            if not 0 <= page < count:
+                raise ApiError("Page inexistante.", "bad_page")
+            pages = [page]
+        try:
+            dpi = int(body.get("dpi") or 150)
+        except (TypeError, ValueError):
+            dpi = 0
+        if dpi not in self.EXPORT_DPI:
+            raise ApiError("Résolution non prise en charge.", "bad_dpi")
+        stem = Path(session.name).stem or "document"
+        path = str(body.get("path") or "")
+        if not path:
+            dialogs = self.app.dialogs
+            if dialogs is None:
+                raise ApiError("Indiquez le chemin de l'image.", "need_path", HTTPStatus.CONFLICT)
+            suggested = f"{stem} - page {pages[0] + 1}.jpg" if len(pages) == 1 else f"{stem}.jpg"
+            path = dialogs.save_jpeg(self._suggested_dir(session), suggested) or ""
+            if not path:
+                self._json({"cancelled": True})
+                return
+        if not path.lower().endswith((".jpg", ".jpeg")):
+            path += ".jpg"
+        target = Path(path)
+        digits = len(str(count))
+        files, reduced = [], False
+        for index in pages:
+            out = target if len(pages) == 1 else target.with_name(f"{target.stem} - page {index + 1:0{digits}d}{target.suffix}")
+            data, effective = session.render_jpeg(index, dpi)
+            reduced = reduced or effective < dpi
+            atomic_write(out, data)
+            files.append(str(out))
+        self.app.settings.remember_dir(str(target))
+        self._json({"files": files, "dir": str(target.parent), "reduced": reduced})
+
     def api_download(self, query):
         session = self.app.require_session()
         from .document import FITZ_LOCK
@@ -871,6 +923,7 @@ for _method, _pattern, _name in (
     ("POST", r"api/redo", "api_redo"),
     ("POST", r"api/save", "api_save"),
     ("POST", r"api/save-as", "api_save_as"),
+    ("POST", r"api/export-jpeg", "api_export_jpeg"),
     ("GET", r"api/download", "api_download"),
     ("GET", r"api/certificates", "api_certificates"),
     ("GET", r"api/signatures", "api_signatures"),

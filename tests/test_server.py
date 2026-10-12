@@ -175,6 +175,31 @@ def test_full_workflow(server, tmp_path):
     assert state["recent"][0]["path"] == str(target)
 
 
+def test_export_jpeg(server, tmp_path):
+    from pathlib import Path
+
+    source = tmp_path / "devis.pdf"
+    source.write_bytes(samples.quote_pdf())
+    assert request(server, "POST", "api/open", {"path": str(source)})[0] == 200
+    # garde-fou : mutation sans en-tête applicatif, rien n'est écrit
+    assert request(server, "POST", "api/export-jpeg", {"scope": "all", "path": str(tmp_path / "x.jpg")}, headers={"X-DestriPDF": "0"})[0] == 403
+    assert not (tmp_path / "x.jpg").exists() and not (tmp_path / "x - page 1.jpg").exists()
+
+    status, data = request(server, "POST", "api/export-jpeg", {"scope": "all", "dpi": 150, "path": str(tmp_path / "devis.jpg")})
+    assert status == 200, data
+    assert [Path(f).name for f in data["files"]] == ["devis - page 1.jpg", "devis - page 2.jpg"]
+    assert all(Path(f).read_bytes()[:2] == b"\xff\xd8" for f in data["files"]) and not data["reduced"]
+
+    status, data = request(server, "POST", "api/export-jpeg", {"scope": "current", "page": 1, "dpi": 300, "path": str(tmp_path / "seule")})
+    assert status == 200 and data["files"] == [str(tmp_path / "seule.jpg")]
+    assert fitz.Pixmap(str(tmp_path / "seule.jpg")).xres == 300
+
+    assert request(server, "POST", "api/export-jpeg", {"dpi": 72, "path": str(tmp_path / "x.jpg")})[0] == 400
+    assert request(server, "POST", "api/export-jpeg", {"page": 9, "path": str(tmp_path / "x.jpg")})[0] == 400
+    # mode navigateur, sans dialogue Windows : le chemin est exigé
+    assert request(server, "POST", "api/export-jpeg", {"scope": "all"})[0] == 409
+
+
 def test_password_flow(server, tmp_path):
     doc = fitz.open()
     doc.new_page().insert_text((72, 72), "Secret")

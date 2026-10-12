@@ -444,3 +444,34 @@ def test_encode_png_roundtrip():
     back = fitz.Pixmap(png)
     assert (back.width, back.height) == (7, 3)
     assert back.pixel(3, 1) == (100, 100, 100)
+
+
+@pytest.mark.parametrize("rotation", [0, 90])
+def test_render_jpeg_for_export(rotation):
+    """Export JPG : page entière à la résolution demandée, droite si la page est pivotée,
+    annotations comprises, résolution inscrite dans le fichier."""
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_text((72, 72), "Facture INV_2026_00119", fontsize=14)
+    page.add_rect_annot(fitz.Rect(300, 300, 400, 400)).set_colors(stroke=(1, 0, 0), fill=(1, 0, 0))
+    page.first_annot.update()
+    if rotation:
+        page.set_rotation(rotation)
+    s = d.PdfSession(doc.tobytes(), name="facture.pdf")
+    data, dpi = s.render_jpeg(0, 150)
+    assert data[:2] == b"\xff\xd8" and dpi == 150
+    image = fitz.Pixmap(data)
+    width, height = (595, 842) if rotation == 0 else (842, 595)
+    assert abs(image.width - width * 150 / 72) <= 1 and abs(image.height - height * 150 / 72) <= 1
+    assert image.xres == 150
+    red = sum(1 for x in range(0, image.width, 8) for y in range(0, image.height, 8) if image.pixel(x, y)[0] > 200 > image.pixel(x, y)[1])
+    assert red > 100, "annotation absente de l'image"
+
+
+def test_render_jpeg_caps_huge_pages():
+    """Un plan A0 à 300 ppp dépasserait 100 millions de pixels : résolution réduite."""
+    doc = fitz.open()
+    doc.new_page(width=3370, height=2384)
+    data, dpi = d.PdfSession(doc.tobytes(), name="plan.pdf").render_jpeg(0, 300)
+    image = fitz.Pixmap(data)
+    assert dpi < 300 and image.width * image.height <= d.MAX_EXPORT_PIXELS * 1.01

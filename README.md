@@ -15,7 +15,8 @@ signature (certificat eIDAS, marchés publics).
 
 ## Installation
 
-1. Lancer `installer_output\DestriPDF-1.1.0-installation.exe` et accepter la
+1. Lancer `installer_output\DestriPDF-1.2.0-installation.exe` (ou l'installateur
+   joint à la release GitHub de la version) et accepter la
    demande d'autorisation de Windows. DestriPDF s'installe pour tous les
    utilisateurs du poste dans `C:\Program Files\DestriPDF` (« Programmes » dans
    l'Explorateur). En ligne de commande, `/CURRENTUSER` installe pour le seul
@@ -81,6 +82,15 @@ affichent. Le panneau « Commentaires » (menu ⋯) les liste toutes.
 
 Les champs d'un formulaire PDF se remplissent directement en mode Sélection.
 
+### Exporter en JPG
+
+Menu ⋯ › Exporter en JPG : la page affichée ou toutes les pages, en 150 ppp
+(écran, courriel) ou 300 ppp (impression). Une image par page, numérotée d'après
+le nom choisi (« devis - page 1.jpg », « devis - page 2.jpg »…). Les images
+reprennent la page telle qu'affichée : annotations, champs remplis et
+signatures visibles compris. Une très grande page (plan A0) est exportée à une
+résolution réduite, signalée à la fin de l'export.
+
 Ctrl+Z annule, Ctrl+Y rétablit ; chaque bouton indique l'action concernée.
 
 ### Signer avec la clé
@@ -97,11 +107,15 @@ Ctrl+Z annule, Ctrl+Y rétablit ; chaque bouton indique l'action concernée.
    « nom - signé.pdf », l'original reste intact), puis saisir le code PIN dans la
    fenêtre du logiciel de la clé.
 
-Le cadre visible reprend la présentation d'Acrobat : à gauche le nom du
-signataire en grand (ou l'image de la signature manuscrite), à droite
+Le cadre visible reprend la mise en page d'Acrobat : à gauche le nom du
+signataire en grand, coupé au besoin dans le mot comme le fait Acrobat
+(« Florent / DESTRIB / OIS »), ou l'image de la signature manuscrite ; à droite
 « Signature numérique de … », le motif et le lieu s'ils sont renseignés, puis la
-date au format d'Acrobat (« Date : 2026.10.12 13:14:05 +02'00' »). Il n'est que
-la représentation de la signature : la preuve est la signature électronique
+date au format d'Acrobat (« Date : 2026.10.12 13:14:05 +02'00' »). Chaque moitié
+est remplie au plus grand, en noir, en Segoe UI (la police de Windows la plus
+proche de Myriad Pro, police d'Acrobat). Le filigrane central est l'emblème de
+DestriPDF : le logo d'Acrobat est une marque d'Adobe. Le cadre n'est que la
+représentation de la signature : la preuve est la signature électronique
 elle-même, contrôlée par Acrobat et par DestriPDF à l'ouverture.
 
 La signature produite est une signature PAdES (ETSI.CAdES.detached, SHA-256)
@@ -112,13 +126,19 @@ signature reste vérifiable après l'expiration du certificat et Acrobat la dit
 « compatible LTV ». Un certificat révoqué est refusé avant toute saisie du PIN.
 Sans connexion, la signature est faite sans cet état et un message le signale.
 Réglage : menu ⋯ › Réglages › Validation à long terme. Un document déjà signé
-peut être contresigné : les signatures précédentes restent valides.
+peut être contresigné : les signatures précédentes restent valides, et la
+vérification les dit valides comme Acrobat. Une annotation, une valeur de champ
+(un montant) ou une métadonnée (titre, auteur) modifiée après une signature la
+fait signaler « à vérifier », avec le champ en cause. Format produit : PAdES
+(ETSI.CAdES.detached), le format européen qu'Acrobat nomme « équivalent
+CAdES » ; Acrobat peut aussi produire l'ancien format « PKCS#7 détaché ».
 
 À l'ouverture d'un document signé, un bandeau donne le résultat de la
 vérification : intégrité, couverture du document, modifications après signature
 et confiance de la chaîne de certification selon Windows. « Détails » ouvre le
 panneau « Signatures », qui indique aussi si l'état de révocation est intégré
-(LTV) et si l'heure est attestée par une autorité d'horodatage.
+(LTV, dans le document ou, pour Acrobat, dans la signature elle-même) et si
+l'heure est attestée par une autorité d'horodatage reconnue par Windows.
 
 « Apposer ma signature manuscrite » (menu ⋯) pose seulement l'image de la
 signature : elle n'a pas valeur de signature électronique.
@@ -166,6 +186,22 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\recette.ps1
 # Exécutable, test de fumée de l'exécutable et installateur
 powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1
 ```
+
+### Publier une version
+
+Chaque release porte son installateur. Après avoir aligné la version
+(`destripdf/__init__.py`, `installer.iss`, `build_version.txt`) et commité :
+
+```powershell
+# Contrôles et construction complète, rien n'est publié
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release.ps1
+# Puis étiquette vX.Y.Z, push et release GitHub avec l'installateur joint
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release.ps1 -Publish
+```
+
+Le script refuse de publier si les versions diffèrent, si l'arbre n'est pas
+propre, hors de `main`, si l'étiquette existe ou si `build.ps1` échoue ; la
+release indique l'empreinte SHA-256 de l'installateur.
 
 ### Architecture
 

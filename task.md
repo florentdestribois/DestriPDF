@@ -152,14 +152,94 @@ Cette signature doit avoir une vraie preuve de signature ».
   paquet, « Ouvrir avec » et raccourcis en place ; lancé sans droits
   d'administrateur : fenêtre en 0,5 s, première page en 0,9 s, aucun fichier
   écrit dans Program Files.
-- [ ] Relecture indépendante du changement (agent) : en cours au moment du
-  commit de la 1.1.0.
+- [x] Relecture indépendante du changement (agent) : terminée après le commit de
+  la 1.1.0 ; constats traités en 1.2.0 (ci-dessous).
+
+## Version 1.2.0 — 12 octobre 2026, fin d'après-midi
+
+Retour de Florent avec la même facture (INV_2026_00119) signée par Acrobat et
+par DestriPDF 1.1.0 : « Ce n'est toujours pas la même signature ». Puis :
+« Permet ensuite un export en .jpg puis génère toujours un installateur à
+chaque release ». La 1.1.1 (cadre Acrobat) a été construite mais pas installée
+(autorisation Windows annulée) : son contenu est repris dans la 1.2.0.
+
+### Constat (fichiers relus en lecture seule)
+
+- [x] Signatures électroniques équivalentes : même clé CertEurope, certificat
+  qualifié. DestriPDF : PAdES (ETSI.CAdES.detached) avec état de révocation
+  intégré (4 réponses OCSP de CertEurope : LTV confirmé avec la vraie clé).
+  Acrobat du poste : ancien format PKCS#7 détaché, état de révocation dans la
+  signature.
+- [x] Écarts du cadre : Acrobat remplit chaque moitié au plus grand (nom coupé
+  dans le mot : « DESTRIB / OIS »), Myriad Pro noir, logo d'Acrobat pâle au
+  centre ; DestriPDF 1.1.0 : nom deux fois plus petit, Roboto gris foncé.
+- [x] Écart de verdict : DestriPDF disait « à vérifier » la première de deux
+  signatures ; Acrobat les dit valides.
+
+### Réalisé
+
+- [x] Mise en page d'Acrobat : chaque moitié remplie au plus grand, coupure dans
+  un mot trop large, marge de 1 pt, noir, Segoe UI ; emblème DestriPDF pâle au
+  centre (logo d'Acrobat : marque d'Adobe ; Myriad Pro : police d'Adobe).
+  Comparé au cadre d'Acrobat de la facture : mêmes retours à la ligne.
+- [x] Verdict : une contresignature laisse la signature précédente valide, sauf
+  interdiction DocMDP ; annotation, valeur de champ ou métadonnée modifiée
+  ensuite : « à vérifier », champ nommé. Vérifié sur la facture réelle : les
+  deux signatures DestriPDF et celle d'Acrobat sont « valides » et « LTV ».
+- [x] Export JPG (menu ⋯) : page affichée ou toutes, 150 ou 300 ppp, une image
+  par page numérotée, résolution inscrite, très grande page réduite et signalée.
+- [x] Release : `scripts\release.ps1` (versions alignées, arbre propre sur main,
+  `build.ps1` complet, installateur joint à la release GitHub avec son SHA-256) ;
+  règle inscrite dans AGENTS.md, plan et README.
+- [x] Version 1.2.0.
+
+### Relecture indépendante de la 1.1.0 (agent) — constats traités
+
+- [x] Valeur de champ (montant) modifiée après la signature déclarée valide
+  (introduit par la 1.1.1 non livrée) : comparaison des valeurs `/V` entre la
+  révision signée et la dernière.
+- [x] Métadonnées modifiées présentées comme « aucune modification » :
+  comparaison de /Info et du XMP (titre, auteur…), sans les dates et le
+  producteur que pyHanko réécrit à chaque mise à jour.
+- [x] Révocation non décelée si la liste de la racine manque : contrôle souple
+  du seul signataire avant le PIN.
+- [x] Horodatage « attesté » pour tout jeton : exigé intact, valide et autorité
+  approuvée par Windows ; sinon « jeton présent, autorité non vérifiée ».
+- [x] Horodatage + LTV : racine de la TSA prise dans la chaîne construite par
+  Windows à partir de son jeton ; messages selon la cause (signataire,
+  autorité émettrice, horodatage).
+- [x] État de révocation obtenu mais DSS non écrit après le PIN : la signature
+  est gardée (signature étape par étape), message explicite.
+- [x] Heure du cadre et `/M` identiques à la seconde (`system_time` imposé).
+- [x] LTV non reconnue sans racine intégrée ou `/M` sans fuseau : racines de la
+  chaîne Windows, heure locale par défaut ; état archivé dans une signature
+  PKCS#7 d'Acrobat lu, autorité émettrice pour ancre comme Acrobat.
+- [ ] Mise à jour d'une installation « par utilisateur » 1.0.0 : seconde
+  installation possible ; aucune ne subsiste (désinstallée sur ce poste, aucune
+  autre diffusion). Proxy obligatoire : aiohttp ne l'utilise pas (LTV en repli).
+
+### Validations
+
+- [x] Tests : 79 (contresignature valide, montant modifié, métadonnées, XMP,
+  horodatage non vérifié, LTV avec horodatage, révocation sans liste racine,
+  DSS illisible, heure du cadre, messages de révocation, archive PKCS#7
+  d'Acrobat avec répondeur OCSP simulé, export JPG).
+- [x] Recette Edge sur les sources : 28 parcours sur 28 (export JPG compris).
+- [x] `build.ps1` 1.2.0 : 79 tests, test de fumée de l'exécutable figé 16/16
+  (LTV avec autorité simulée), installateur `DestriPDF-1.2.0-installation.exe`
+  (34,5 Mo) ; recette Edge sur l'exécutable figé : 28 parcours sur 28.
+- [ ] Installation de la 1.2.0 dans Program Files : autorisation Windows à
+  donner par Florent (la tentative 1.1.1 a été annulée ; poste encore en 1.1.0).
+- [ ] Commit et première release `v1.2.0` par `scripts\release.ps1 -Publish` :
+  sur demande explicite de Florent.
 
 ### Reste à faire / limites
 
 - [ ] Signature réelle avec la clé CertEurope puis contrôle dans Acrobat :
   « Signature valide » et « compatible LTV » attendus (seul essai impossible sans
   la clé et son PIN).
+- [ ] Format PKCS#7 détaché d'Acrobat non proposé : DestriPDF signe en PAdES
+  (format européen, « équivalent CAdES » dans Acrobat).
 - [ ] Si Florent le souhaite, DestriPDF comme lecteur PDF par défaut : Windows
   réserve ce choix à l'utilisateur (clic droit › Ouvrir avec › Choisir une
   autre application › DestriPDF › Toujours).

@@ -28,6 +28,8 @@ class TestIdentity:
     chain: list[x509.Certificate]
     pfx: bytes
     crls: dict[str, bytes] = field(default_factory=dict)  # nom publié -> liste DER
+    issuer_cert: x509.Certificate | None = None  # répondeur OCSP de test (autorité émettrice)
+    issuer_key: object = None
 
     @property
     def der(self) -> bytes:
@@ -83,9 +85,11 @@ def _crl(issuer: x509.Certificate, key, revoked_serials=(), clock_ahead: int = 0
 
 
 def make_test_pki(
-    *, ec_key: bool = False, qualified: bool = True, crl_base: str | None = None, revoked: bool = False, authority_clock_ahead: int = 0
+    *, ec_key: bool = False, qualified: bool = True, crl_base: str | None = None, revoked: bool = False,
+    authority_clock_ahead: int = 0, ocsp: bool = False,
 ) -> TestIdentity:
-    """`authority_clock_ahead` : avance (s) de l'horloge de l'autorité sur celle du poste."""
+    """`authority_clock_ahead` : avance (s) de l'horloge de l'autorité sur celle du poste ;
+    `ocsp` : le certificat du signataire déclare aussi un répondeur OCSP (`crl_base`/ocsp)."""
     root_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     root_name = _name("Racine de test DestriPDF", "Autorité de test")
     root = (
@@ -118,6 +122,13 @@ def make_test_pki(
         )
     if crl_base:
         builder = builder.add_extension(_distribution_point(f"{crl_base}/intermediaire.crl"), critical=False)
+    if crl_base and ocsp:
+        builder = builder.add_extension(
+            x509.AuthorityInformationAccess([
+                x509.AccessDescription(x509.oid.AuthorityInformationAccessOID.OCSP, x509.UniformResourceIdentifier(f"{crl_base}/ocsp"))
+            ]),
+            critical=False,
+        )
     cert = builder.sign(inter_key, hashes.SHA256())
     crls = {}
     if crl_base:
@@ -133,4 +144,21 @@ def make_test_pki(
         [inter, root],
         serialization.BestAvailableEncryption(PFX_PASSWORD.encode()),
     )
-    return TestIdentity(cert=cert, key=key, chain=[cert, inter, root], pfx=pfx, crls=crls)
+    return TestIdentity(cert=cert, key=key, chain=[cert, inter, root], pfx=pfx, crls=crls, issuer_cert=inter, issuer_key=inter_key)
+
+
+def ocsp_good_response(ident: TestIdentity, request_der: bytes) -> bytes:
+    """Réponse OCSP « bon » pour le signataire, signée par son autorité émettrice."""
+    from cryptography.x509 import ocsp
+
+    request = ocsp.load_der_ocsp_request(request_der)
+    now = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1)
+    builder = ocsp.OCSPResponseBuilder().add_response(
+        cert=ident.cert, issuer=ident.issuer_cert, algorithm=request.hash_algorithm,
+        cert_status=ocsp.OCSPCertStatus.GOOD, this_update=now, next_update=now + dt.timedelta(days=1),
+        revocation_time=None, revocation_reason=None,
+    ).responder_id(ocsp.OCSPResponderEncoding.HASH, ident.issuer_cert)
+    for extension in request.extensions:  # nonce renvoyé, comme un vrai répondeur
+        if isinstance(extension.value, x509.OCSPNonce):
+            builder = builder.add_extension(extension.value, critical=False)
+    return builder.sign(ident.issuer_key, hashes.SHA256()).public_bytes(serialization.Encoding.DER)

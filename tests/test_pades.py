@@ -8,7 +8,7 @@ import pymupdf as fitz
 import pytest
 
 from destripdf.signing import pades, wincert
-from tests.pki import PFX_PASSWORD, make_test_pki
+from tests.pki import PFX_PASSWORD, make_test_pki, ocsp_good_response
 
 
 @pytest.fixture(scope="module")
@@ -93,9 +93,26 @@ def test_second_signature_keeps_first_valid(identity, store_factory):
     assert twice.startswith(once)  # mise à jour incrémentale
     first, second = pades.validate_signatures(twice, trust_check=_trusted)
     assert first.intact and first.valid and not first.covers_whole_file
-    assert "signatures ont été ajoutés" in first.modification
-    assert first.status == "warning"
+    assert "d'autres signatures" in first.modification
+    # Comme Acrobat : une contresignature ne remet pas en cause la première signature.
+    assert first.status == "valid", first.summary
     assert second.status == "valid"
+
+
+def test_annotation_after_signature_needs_review(identity, store_factory, tmp_path):
+    """Une annotation ajoutée après la signature reste signalée « à vérifier »."""
+    thumb = hashlib.sha1(identity.der).hexdigest()
+    signed, _ = pades.sign_pdf(_sample_pdf(), pades.SignOptions(thumbprint=thumb), store_factory=store_factory)
+    path = tmp_path / "signe.pdf"
+    path.write_bytes(signed)
+    doc = fitz.open(path)
+    doc[0].add_text_annot((100, 100), "Remarque ajoutée après signature")
+    doc.saveIncr()
+    doc.close()
+    report = pades.validate_signatures(path.read_bytes(), trust_check=_trusted)[0]
+    assert report.intact and report.valid
+    assert not report.changes_allowed
+    assert report.status == "warning", report.summary
 
 
 def test_rotated_page_signature(identity, store_factory):
@@ -212,11 +229,11 @@ def test_appearance_with_image_renders(identity, store_factory):
     assert pades.validate_signatures(signed, trust_check=_trusted)[0].status == "valid"
 
 
-def test_timestamp_from_local_tsa(identity, store_factory):
-    """Horodatage (PAdES B-T) par une autorité d'horodatage locale simulée."""
+@contextlib.contextmanager
+def _local_tsa():
+    """Autorité d'horodatage simulée (certificat auto-signé) sur un serveur local."""
     import datetime as dt
-    import threading
-    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     from asn1crypto import keys, tsp
     from asn1crypto import x509 as asn1_x509
@@ -224,7 +241,6 @@ def test_timestamp_from_local_tsa(identity, store_factory):
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
-    from pyhanko.pdf_utils.reader import PdfFileReader
     from pyhanko.sign.timestamps import DummyTimeStamper
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -240,7 +256,7 @@ def test_timestamp_from_local_tsa(identity, store_factory):
         tsa_cert=asn1_x509.Certificate.load(cert.public_bytes(serialization.Encoding.DER)),
         tsa_key=keys.PrivateKeyInfo.load(key.private_bytes(serialization.Encoding.DER, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())),
     )
-    calls = []
+    calls: list[str] = []
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
@@ -256,23 +272,251 @@ def test_timestamp_from_local_tsa(identity, store_factory):
         def log_message(self, *args):
             pass
 
-    server = HTTPServer(("127.0.0.1", 0), Handler)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        thumb = hashlib.sha1(identity.der).hexdigest()
-        options = pades.SignOptions(thumbprint=thumb, timestamp_url=f"http://127.0.0.1:{server.server_address[1]}/tsa")
-        signed, _ = pades.sign_pdf(_sample_pdf(), options, store_factory=store_factory)
+        yield f"http://127.0.0.1:{server.server_address[1]}/tsa", calls
     finally:
         server.shutdown()
-    # pyHanko interroge l'autorité une première fois pour estimer la taille du jeton.
-    assert calls and all(c == "application/timestamp-query" for c in calls)
+        server.server_close()
+
+
+def test_timestamp_from_local_tsa(identity, store_factory):
+    """Horodatage (PAdES B-T) par une autorité d'horodatage locale simulée."""
+    import io
+
+    from pyhanko.pdf_utils.reader import PdfFileReader
     from pyhanko.sign.validation import validate_pdf_signature
     from pyhanko_certvalidator import ValidationContext
 
-    embedded = PdfFileReader(__import__("io").BytesIO(signed)).embedded_signatures[0]
+    thumb = hashlib.sha1(identity.der).hexdigest()
+    with _local_tsa() as (url, calls):
+        signed, info = pades.sign_pdf(_sample_pdf(), pades.SignOptions(thumbprint=thumb, timestamp_url=url), store_factory=store_factory)
+    # pyHanko interroge l'autorité une première fois pour estimer la taille du jeton.
+    assert calls and all(c == "application/timestamp-query" for c in calls)
+    assert info["timestamp"]
+    embedded = PdfFileReader(io.BytesIO(signed)).embedded_signatures[0]
     status = validate_pdf_signature(embedded, ValidationContext(trust_roots=[], allow_fetching=False))
     assert status.timestamp_validity is not None and status.timestamp_validity.intact
-    assert pades.validate_signatures(signed, trust_check=_trusted)[0].intact
+    report = pades.validate_signatures(signed, trust_check=_trusted)[0]
+    assert report.intact and report.timestamp == "trusted" and report.timestamp_at
+
+    # Autorité d'horodatage inconnue de Windows : jeton présent, heure non attestée.
+    def signer_only(ders):
+        trusted = ders[0] == identity.der
+        return wincert.ChainResult(ders=ders, error_status=0 if trusted else wincert.CERT_TRUST_IS_UNTRUSTED_ROOT)
+
+    report = pades.validate_signatures(signed, trust_check=signer_only)[0]
+    assert report.status == "valid" and report.timestamp == "unverified"
+
+
+def test_ltv_with_timestamp_authority():
+    """LTV et horodatage ensemble : la racine de l'autorité d'horodatage vient de la
+    chaîne construite par Windows à partir de son jeton."""
+    crls: dict[str, bytes] = {}
+    with _authority(crls) as (base, _hits), _local_tsa() as (url, _calls):
+        ident = make_test_pki(crl_base=base)
+        crls.update(ident.crls)
+        factory, pins = _counting_factory(ident)
+        signed, info = pades.sign_pdf(_sample_pdf(), pades.SignOptions(thumbprint=hashlib.sha1(ident.der).hexdigest(), timestamp_url=url), store_factory=factory)
+    assert len(pins) == 1
+    assert info["ltv"] and info["timestamp"], info
+    report = pades.validate_signatures(signed, trust_check=_trusted)[0]
+    assert report.status == "valid" and report.ltv and report.timestamp == "trusted", report.summary
+
+
+def _form_with_amount() -> bytes:
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Acte d'engagement", fontsize=14)
+    widget = fitz.Widget()
+    widget.field_type = fitz.PDF_WIDGET_TYPE_TEXT
+    widget.field_name = "montant"
+    widget.field_value = "120 000,00 EUR"
+    widget.rect = fitz.Rect(100, 100, 300, 120)
+    page.add_widget(widget)
+    return doc.tobytes()
+
+
+def _third_party_update(pdf: bytes, change) -> bytes:
+    """Mise à jour incrémentale minimale par un tiers (pyHanko), après la signature."""
+    import io
+
+    from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+
+    writer = IncrementalPdfFileWriter(io.BytesIO(pdf))
+    change(writer)
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
+def test_form_value_changed_after_signature_needs_review(identity, store_factory):
+    """Un montant changé après la signature n'est pas une modification admise."""
+    from pyhanko.pdf_utils import generic
+
+    thumb = hashlib.sha1(identity.der).hexdigest()
+    signed, _ = pades.sign_pdf(_form_with_amount(), pades.SignOptions(thumbprint=thumb), store_factory=store_factory)
+
+    def change_amount(writer):
+        for ref in writer.root["/AcroForm"]["/Fields"]:
+            field = ref.get_object()
+            if field.get("/T") == "montant":
+                field["/V"] = generic.TextStringObject("98 000,00 EUR")
+                writer.update_container(field)
+
+    report = pades.validate_signatures(_third_party_update(signed, change_amount), trust_check=_trusted)[0]
+    assert report.intact and report.valid
+    assert report.status == "warning" and "montant" in report.summary, report.summary
+
+    # Témoin : une contresignature seule laisse la première signature valide.
+    twice, _ = pades.sign_pdf(signed, pades.SignOptions(thumbprint=thumb, appearance=pades.Appearance(0, (300, 600, 500, 680))), store_factory=store_factory)
+    assert pades.validate_signatures(twice, trust_check=_trusted)[0].status == "valid"
+
+
+def test_metadata_change_after_signature_needs_review(identity, store_factory):
+    signed, _ = pades.sign_pdf(_sample_pdf(), pades.SignOptions(thumbprint=hashlib.sha1(identity.der).hexdigest()), store_factory=store_factory)
+
+    def retitle(writer):
+        writer.document_meta.title = "Titre modifié"
+        writer.mark_update(writer._info)  # sans objet modifié, pyHanko n'écrit aucune révision
+
+    changed = _third_party_update(signed, retitle)
+    assert fitz.open("pdf", changed).metadata["title"] == "Titre modifié"
+    report = pades.validate_signatures(changed, trust_check=_trusted)[0]
+    assert report.status == "warning" and "métadonnées" in report.summary, report.summary
+
+
+def test_ltv_on_document_with_xmp_metadata_stays_valid():
+    """pyHanko réécrit dates et producteur (/Info, XMP) en ajoutant le DSS : ce n'est
+    pas une modification du document."""
+    doc = fitz.open()
+    doc.new_page().insert_text((72, 72), "Acte d'engagement", fontsize=14)
+    doc.set_metadata({"title": "Acte d'engagement", "author": "Menuiserie Destribois"})
+    doc.set_xml_metadata(
+        '<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+        '<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xmp="http://ns.adobe.com/xap/1.0/">'
+        '<dc:title><rdf:Alt><rdf:li xml:lang="x-default">Acte d\'engagement</rdf:li></rdf:Alt></dc:title>'
+        "<xmp:ModifyDate>2026-10-01T10:00:00+02:00</xmp:ModifyDate></rdf:Description></rdf:RDF></x:xmpmeta>"
+    )
+    crls: dict[str, bytes] = {}
+    with _authority(crls) as (base, _hits):
+        ident = make_test_pki(crl_base=base)
+        crls.update(ident.crls)
+        signed, info = pades.sign_pdf(doc.tobytes(), pades.SignOptions(thumbprint=hashlib.sha1(ident.der).hexdigest()),
+                                      store_factory=lambda: wincert.CertStore.from_pfx(ident.pfx, PFX_PASSWORD))
+    assert info["ltv"]
+    report = pades.validate_signatures(signed, trust_check=_trusted)[0]
+    assert report.status == "valid" and report.ltv, report.summary
+
+
+def test_revoked_certificate_refused_even_without_root_list():
+    """Liste de révocation de la racine absente : la révocation du signataire est
+    quand même décelée avant le PIN (contrôle souple du seul signataire)."""
+    crls: dict[str, bytes] = {}
+    with _authority(crls) as (base, hits):
+        ident = make_test_pki(crl_base=base, revoked=True)
+        crls["intermediaire.crl"] = ident.crls["intermediaire.crl"]
+        factory, pins = _counting_factory(ident)
+        with pytest.raises(pades.SigningError) as err:
+            pades.sign_pdf(_sample_pdf(), pades.SignOptions(thumbprint=hashlib.sha1(ident.der).hexdigest()), store_factory=factory)
+    assert err.value.code == "revoked" and "Votre certificat est révoqué" in str(err.value)
+    assert not pins and "racine.crl" in hits
+
+
+def test_unreadable_existing_dss_keeps_the_signature():
+    """L'écriture de l'état de révocation échoue après le PIN : la signature est gardée."""
+    doc = fitz.open()
+    doc.new_page().insert_text((72, 72), "Acte d'engagement", fontsize=14)
+    xref = doc.get_new_xref()
+    doc.update_object(xref, "<<>>")
+    doc.update_stream(xref, b"\x00 certificat illisible")
+    doc.xref_set_key(doc.pdf_catalog(), "DSS", f"<</Certs [{xref} 0 R]>>")
+    crls: dict[str, bytes] = {}
+    with _authority(crls) as (base, _hits):
+        ident = make_test_pki(crl_base=base)
+        crls.update(ident.crls)
+        factory, pins = _counting_factory(ident)
+        signed, info = pades.sign_pdf(doc.tobytes(), pades.SignOptions(thumbprint=hashlib.sha1(ident.der).hexdigest()), store_factory=factory)
+    assert len(pins) == 1
+    assert not info["ltv"] and info["ltv_note"] == pades.LTV_NOT_RECORDED
+    report = pades.validate_signatures(signed, trust_check=_trusted)[0]
+    assert report.intact and report.valid and report.covers_whole_file
+
+
+def test_appearance_shows_the_signature_time(identity, store_factory):
+    """La date du cadre visible est celle de la signature (/M), à la seconde."""
+    import re
+    from datetime import datetime
+
+    box = (300, 650, 540, 730)
+    signed, _ = pades.sign_pdf(
+        _sample_pdf(), pades.SignOptions(thumbprint=hashlib.sha1(identity.der).hexdigest(), appearance=pades.Appearance(1, box)),
+        store_factory=store_factory,
+    )
+    words = fitz.open("pdf", signed)[1].get_text("words", clip=fitz.Rect(box))
+    shown = re.search(r"(\d{4})\.(\d{2})\.(\d{2}) (\d{2}):(\d{2}):(\d{2})", " ".join(w[4] for w in words)).groups()
+    signed_at = datetime.fromisoformat(pades.validate_signatures(signed, trust_check=_trusted)[0].signed_at)
+    assert tuple(int(v) for v in shown) == signed_at.timetuple()[:6]
+
+
+@pytest.mark.parametrize("anchor", ["racine", "intermediaire"])
+def test_acrobat_pkcs7_revocation_archive_counts_as_ltv(anchor):
+    """Format PKCS#7 d'Acrobat : l'état de révocation est archivé dans la signature
+    (adbe-revocationInfoArchival), sans DSS ; DestriPDF la reconnaît « LTV ». Avec
+    l'autorité émettrice pour ancre (liste de confiance européenne), Acrobat
+    n'archive que l'état du certificat du signataire : c'est encore « LTV »."""
+    import io
+
+    from asn1crypto import keys
+    from asn1crypto import x509 as asn1_x509
+    from cryptography.hazmat.primitives import serialization
+    from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+    from pyhanko.pdf_utils.reader import PdfFileReader
+    from pyhanko.sign import fields, signers
+    from pyhanko_certvalidator import ValidationContext
+    from pyhanko_certvalidator.registry import SimpleCertificateStore
+
+    crls: dict[str, bytes] = {}
+    responder: dict = {}
+    with _authority(crls, responder) as (base, _hits):
+        # Comme CertEurope : état du signataire par OCSP, signé par l'autorité émettrice.
+        ident = make_test_pki(crl_base=base, ocsp=anchor == "intermediaire")
+        crls.update(ident.crls)
+        responder["identite"] = ident
+        chain = [asn1_x509.Certificate.load(der) for der in ident.chain_ders]
+        key = keys.PrivateKeyInfo.load(ident.key.private_bytes(serialization.Encoding.DER, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+        acrobat_like = signers.SimpleSigner(signing_cert=chain[0], signing_key=key, cert_registry=SimpleCertificateStore.from_certs(chain[1:]))
+        trust_anchor = chain[-1] if anchor == "racine" else chain[1]
+        meta = signers.PdfSignatureMetadata(
+            field_name="Signature1", subfilter=fields.SigSeedSubFilter.ADOBE_PKCS7_DETACHED, embed_validation_info=True,
+            validation_context=ValidationContext(trust_roots=[trust_anchor], allow_fetching=True, revocation_mode="hard-fail"),
+        )
+        signed = signers.sign_pdf(IncrementalPdfFileWriter(io.BytesIO(_sample_pdf())), meta, signer=acrobat_like).getvalue()
+    assert b"/DSS" not in signed
+    archived_crls, archived_ocsps = pades._archived_revocation(PdfFileReader(io.BytesIO(signed)).embedded_signatures[0])
+    if anchor == "racine":
+        assert len(archived_crls) == 2  # chaîne complète
+    else:
+        assert not archived_crls and len(archived_ocsps) == 1  # signataire seul, comme Acrobat
+    report = pades.validate_signatures(signed, trust_check=_trusted)[0]
+    assert report.status == "valid" and report.ltv, report.summary
+
+
+def test_revoked_message_names_the_right_certificate(identity):
+    from types import SimpleNamespace
+
+    from asn1crypto import x509 as asn1_x509
+
+    signer = asn1_x509.Certificate.load(identity.der)
+    root = asn1_x509.Certificate.load(identity.chain_ders[-1])
+
+    def revoked(leaf, ee):
+        return SimpleNamespace(original_path=SimpleNamespace(leaf=leaf), is_ee_cert=ee)
+
+    assert "Votre certificat est révoqué" in pades._revoked_message(revoked(signer, True), signer)
+    assert "autorité qui a émis" in pades._revoked_message(revoked(signer, False), signer)
+    assert "horodatage" in pades._revoked_message(revoked(root, True), signer)
 
 
 def test_format_signing_time():
@@ -315,13 +559,27 @@ def test_appearance_reads_like_acrobat(identity, store_factory, box):
 
 
 @contextlib.contextmanager
-def _authority(crls: dict[str, bytes]):
-    """Autorité simulée : publie ses listes de révocation sur un serveur local."""
+def _authority(crls: dict[str, bytes], responder: dict | None = None):
+    """Autorité simulée : publie ses listes de révocation sur un serveur local, et
+    répond en OCSP pour l'identité placée dans `responder["identite"]`."""
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     hits: list[str] = []
 
     class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            hits.append("ocsp")
+            if responder is None or "identite" not in responder:
+                self.send_error(404)
+                return
+            answer = ocsp_good_response(responder["identite"], body)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/ocsp-response")
+            self.send_header("Content-Length", str(len(answer)))
+            self.end_headers()
+            self.wfile.write(answer)
+
         def do_GET(self):
             name = self.path.rsplit("/", 1)[-1]
             hits.append(name)

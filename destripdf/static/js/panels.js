@@ -296,8 +296,12 @@ export class Panel {
           r.location ? el('dt', { text: 'Lieu' }) : null, r.location ? el('dd', { text: r.location }) : null,
           el('dt', { text: 'Certificat' }), el('dd', { text: r.qualified ? 'Qualifié eIDAS' : 'Non qualifié' }),
           el('dt', { text: 'Confiance' }), el('dd', { text: r.trust_detail || '—' }),
-          el('dt', { text: 'Révocation' }), el('dd', { text: r.ltv ? 'État intégré : vérifiable à long terme (LTV)' : 'Non intégré : vérification en ligne seulement' }),
-          el('dt', { text: 'Heure' }), el('dd', { text: r.timestamp ? 'Attestée par une autorité d\'horodatage' : 'Horloge de l\'ordinateur du signataire' })));
+          el('dt', { text: 'Révocation' }), el('dd', { text: r.ltv ? 'État intégré : vérifiable à long terme (LTV)' : 'Non intégré : le lecteur PDF doit interroger l\'autorité' }),
+          el('dt', { text: 'Heure' }), el('dd', {
+            text: r.timestamp === 'trusted' ? `Attestée par une autorité d'horodatage${r.timestamp_at ? ` (${formatDate(r.timestamp_at)})` : ''}`
+              : r.timestamp === 'unverified' ? 'Jeton d\'horodatage présent, autorité non vérifiée'
+                : 'Horloge de l\'ordinateur du signataire',
+          })));
       if (r.errors?.length) card.append(el('div', { class: 'sig-report-summary', text: r.errors.join(' ') }));
       const go = () => { if (r.page_index !== null && r.page_index !== undefined && r.rect) { this.app.viewer.scrollToPage(r.page_index); this.app.viewer.scrollToRect(r.page_index, r.rect); } };
       card.addEventListener('click', go);

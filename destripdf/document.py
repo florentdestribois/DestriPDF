@@ -32,6 +32,7 @@ FITZ_LOCK = threading.RLock()
 
 HISTORY_BUDGET = 400 * 1024 * 1024
 MAX_RENDER_PIXELS = 40_000_000  # garde-fou mémoire pour un zoom extrême
+MAX_EXPORT_PIXELS = 50_000_000  # export JPG : une page A4 à 300 ppp en compte 8,7 millions
 
 ANNOT_LABELS = {
     "Text": "Note",
@@ -619,6 +620,21 @@ class PdfSession:
                 return pix.tobytes("jpg", jpg_quality=88), "image/jpeg"
             samples, width, height, channels = pix.samples, pix.width, pix.height, pix.n
         return encode_png(samples, width, height, channels), "image/png"
+
+    def render_jpeg(self, index: int, dpi: int, quality: int = 90) -> tuple[bytes, int]:
+        """Page entière en JPEG pour l'export, telle qu'affichée (annotations, champs
+        remplis et signatures visibles compris). Résolution réduite pour une très
+        grande page (plan) au-delà de MAX_EXPORT_PIXELS ; renvoie la résolution réelle."""
+        with FITZ_LOCK:
+            page = self.page(index)
+            rect = page.rect
+            scale = dpi / 72
+            if rect.width * rect.height * scale * scale > MAX_EXPORT_PIXELS:
+                scale = math.sqrt(MAX_EXPORT_PIXELS / (rect.width * rect.height))
+            effective = max(1, round(scale * 72))
+            pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False, annots=True)
+            pix.set_dpi(effective, effective)  # taille d'impression juste dans Word, Paint…
+            return pix.tobytes("jpg", jpg_quality=quality), effective
 
     # -- texte --
 

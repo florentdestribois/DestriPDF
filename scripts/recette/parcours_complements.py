@@ -186,6 +186,27 @@ try:
         edge.shot(OUT / "r3-07-impression.png")
         edge.call("Emulation.setEmulatedMedia", media="")
 
+    @step("Exporter en JPG : menu ⋯, toutes les pages en 150 ppp")
+    def _():
+        edge.click_on("#btn-more")
+        edge.wait_for("[...document.querySelectorAll('.menu-item')].some(b => b.textContent.includes('Exporter en JPG'))")
+        edge.js("[...document.querySelectorAll('.menu-item')].find(b => b.textContent.includes('Exporter en JPG')).click()")
+        edge.wait_for("document.querySelector('.modal-title') && document.querySelector('.modal-title').textContent.includes('Exporter en JPG')")
+        edge.js("document.querySelector('.modal select').value = 'all'")
+        edge.shot(OUT / "r3-07b-export-jpg.png")
+        edge.js("[...document.querySelectorAll('.modal .btn-primary')][0].click()")
+        # Mode navigateur, sans dialogue Windows : le chemin est saisi.
+        edge.wait_for("document.querySelector('.modal input.text-input')")
+        target = RECETTE / "export.jpg"
+        edge.js(f"document.querySelector('.modal input.text-input').value = {json.dumps(str(target))}")
+        edge.js("[...document.querySelectorAll('.modal .btn-primary')][0].click()")
+        edge.wait_for("[...document.querySelectorAll('.toast')].some(t => t.textContent.includes('images JPG'))", timeout=60)
+        pages = edge.js("window.__app.doc.page_count")
+        files = sorted(RECETTE.glob("export - page *.jpg"))
+        assert len(files) == pages, (pages, files)
+        first = fitz.Pixmap(str(files[0]))
+        assert files[0].read_bytes()[:2] == b"\xff\xd8" and first.xres == 150 and first.width > 1000
+
     @step("Navigation clavier : Tab visible, Échap revient à la sélection")
     def _():
         edge.js("window.__app.tools.set('draw')")

@@ -12,6 +12,9 @@ une fenêtre pywebview (Edge WebView2). Voir `README.md` pour l'architecture.
 - Dépôt : `https://github.com/florentdestribois/DestriPDF` (privé, branche
   `main`). Ne créer ni branche, ni commit, ni push, ni tag, ni publication sans
   demande explicite.
+- Chaque release porte son installateur (demande de Florent) : publier
+  uniquement par `scripts\release.ps1 -Publish`, qui construit et vérifie
+  l'installateur (`build.ps1`) puis le joint à la release GitHub `vX.Y.Z`.
 
 ## Règles techniques
 

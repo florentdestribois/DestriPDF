@@ -67,13 +67,19 @@ class WindowDialogs:
         return result[0] if isinstance(result, (list, tuple)) else str(result)
 
     def save_pdf(self, directory: str, filename: str) -> str | None:
+        return self._save(directory, filename, ("Documents PDF (*.pdf)",))
+
+    def save_jpeg(self, directory: str, filename: str) -> str | None:
+        return self._save(directory, filename, ("Images JPEG (*.jpg;*.jpeg)",))
+
+    def _save(self, directory: str, filename: str, file_types: tuple[str, ...]) -> str | None:
         import webview
 
         result = self.window.create_file_dialog(
             webview.FileDialog.SAVE,
             directory=directory or "",
             save_filename=filename,
-            file_types=("Documents PDF (*.pdf)",),
+            file_types=file_types,
         )
         if not result:
             return None

@@ -489,6 +489,49 @@ class App {
     link.remove();
   }
 
+  async exportJpeg() {
+    if (!this.doc) return;
+    if (this.editor.isOpen) await this.editor.commit();
+    const total = this.doc.page_count;
+    const current = this.viewer.current;
+    const scope = el('select', { class: 'text-input', 'aria-label': 'Pages à exporter' },
+      el('option', { value: 'current', text: `Page affichée (${current + 1})` }),
+      el('option', { value: 'all', text: total > 1 ? `Toutes les pages (${total} images)` : 'Toute la page' }));
+    const quality = el('select', { class: 'text-input', 'aria-label': 'Résolution' },
+      el('option', { value: '150', text: 'Écran et courriel — 150 ppp' }),
+      el('option', { value: '300', text: 'Impression — 300 ppp' }));
+    const body = el('div', {},
+      el('label', { class: 'field-label', text: 'Pages' }), scope,
+      el('label', { class: 'field-label spaced', text: 'Résolution' }), quality,
+      el('p', { class: 'help', text: 'Une image JPG par page, numérotée d\'après le nom choisi. Annotations, champs remplis et signatures visibles figurent sur les images.' }));
+    const choice = await modal({
+      title: 'Exporter en JPG',
+      body,
+      buttons: [{ label: 'Annuler', value: null }, { label: 'Exporter', value: 'ok', kind: 'btn-primary', default: true }],
+    });
+    if (choice !== 'ok') return;
+    const payload = { scope: scope.value, page: current, dpi: Number(quality.value) };
+    if (!this.state?.app?.dialogs) {
+      const stem = (this.doc.name || 'document').replace(/\.pdf$/i, '');
+      const folder = (this.doc.path || '').replace(/[^\\/]*$/, '');
+      const path = await promptModal('Exporter en JPG', { label: 'Chemin complet de l\'image', value: `${folder}${stem}.jpg`, confirm: 'Exporter' });
+      if (!path) return;
+      payload.path = path;
+    }
+    const indicator = busy('Export des images JPG…');
+    try {
+      const data = await Api.post('api/export-jpeg', payload);
+      if (data.cancelled) return;
+      const count = data.files.length;
+      const done = count === 1 ? `Image enregistrée : ${data.files[0].split(/[\\/]/).pop()}` : `${count} images JPG enregistrées dans ${data.dir}`;
+      toast(data.reduced ? `${done}. Page très grande : résolution réduite.` : done, 'ok', { duration: 6000 });
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      indicator.close();
+    }
+  }
+
   async closeDocument() {
     if (!(await this.confirmDiscard())) return;
     await Api.post('api/close').catch(() => {});
@@ -764,6 +807,7 @@ class App {
       { label: 'Enregistrer sous…', icon: 'saveAs', shortcut: 'Ctrl+Maj+S', disabled: !doc, action: () => this.saveAs() },
       ...(this.state?.app?.dialogs ? [] : [{ label: 'Télécharger', icon: 'download', disabled: !doc, action: () => this.download() }]),
       { label: 'Imprimer…', icon: 'print', shortcut: 'Ctrl+P', disabled: !doc, action: () => this.print() },
+      { label: 'Exporter en JPG…', icon: 'image', disabled: !doc, action: () => this.exportJpeg() },
       { label: 'Fermer le document', icon: 'close', disabled: !doc, action: () => this.closeDocument() },
       '-',
       { label: 'Pivoter la page à droite', icon: 'rotate', disabled: !doc, action: () => this.rotatePages([current], 90) },
