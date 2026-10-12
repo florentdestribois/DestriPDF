@@ -71,11 +71,20 @@ while time.time() < deadline and hwnd is None:
 check("relance bloquée à son tour : message affiché", hwnd is not None)
 code = None
 if hwnd is not None:
-    handle = kernel32.OpenProcess(0x00100000 | 0x1000, False, second_pid)  # SYNCHRONIZE | QUERY_LIMITED
-    user32.PostMessageW(hwnd, 0x0111, 1, 0)  # WM_COMMAND, IDOK
-    kernel32.WaitForSingleObject(handle, 10000)
+    handle = kernel32.OpenProcess(0x00100000 | 0x1000 | 0x0001, False, second_pid)  # SYNCHRONIZE | QUERY_LIMITED | TERMINATE
+    # Clic sur le vrai bouton de la boîte (son identifiant n'est pas IDOK), répété
+    # jusqu'à la fin du processus ; en dernier recours, l'instance d'essai est arrêtée
+    # pour ne jamais laisser de message de recette à l'écran.
+    for _ in range(20):
+        button = user32.FindWindowExW(hwnd, None, "Button", None)
+        if button:
+            user32.PostMessageW(button, 0x00F5, 0, 0)  # BM_CLICK
+        if kernel32.WaitForSingleObject(handle, 500) == 0:
+            break
     exit_code = wt.DWORD()
     kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+    if exit_code.value == 259:  # STILL_ACTIVE
+        kernel32.TerminateProcess(handle, 99)
     kernel32.CloseHandle(handle)
     code = exit_code.value
 check("relance terminée après le message (code 1)", code == 1, f"code {code}")

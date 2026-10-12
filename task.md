@@ -275,6 +275,17 @@ s'ouvre depuis l'Explorateur).
 - [x] Démarrage normal de l'exécutable figé : fenêtre en 0,43 s, interface en
   0,84 s, première page en 1,0 s ; surveillance non déclenchée après 25 s ;
   fermeture propre.
+- [x] Release `v1.2.1` publiée par `scripts\release.ps1 -Publish` sans
+  intervention (correctif du script validé) :
+  https://github.com/florentdestribois/DestriPDF/releases/tag/v1.2.1, étiquette
+  sur `cd06e28`, SHA-256 `53001FEFCFF1557DE90DC7B516484FCDD010187EAAB616C9C440279
+  51E972705` identique sur GitHub.
+- [x] Recette de surveillance sur l'exécutable de la release : 9/9, trois fois
+  de suite. Le script de recette cliquait sur IDOK alors que le bouton du
+  message porte l'identifiant 2 (instance d'essai restée à l'écran, arrêtée) :
+  clic sur le vrai bouton, arrêt de l'instance d'essai en dernier recours.
+- [ ] Installation de la 1.2.1 sur le poste (poste en 1.2.0) : à la demande de
+  Florent, autorisation Windows.
 
 ### Reste à faire / limites
 
