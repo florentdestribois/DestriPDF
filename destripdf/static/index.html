@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DestriPDF</title>
+<link rel="icon" href="static/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="static/app.css">
+<script type="module" src="static/js/app.js"></script>
+</head>
+<body>
+<header class="plate" id="plate">
+  <div class="plate-brand">
+    <svg class="emblem" viewBox="0 0 32 32" aria-hidden="true"><path d="M8 3h11l7 7v19H8z" class="emblem-sheet"/><path d="M19 3v7h7" class="emblem-fold"/><path d="M12 22.5c2.2-1.4 3.4-3.6 5-6.4l2.6 1.5c-1.6 2.9-3.3 4.9-6 6.2z" class="emblem-nib"/><path d="M12 25h10" class="emblem-line"/></svg>
+    <div class="plate-titles">
+      <span class="plate-eyebrow">DestriPDF</span>
+      <span class="plate-title" id="doc-title">Aucun document</span>
+    </div>
+  </div>
+  <div class="plate-actions">
+    <button class="btn btn-ghost" id="btn-open" type="button" data-shortcut="Ctrl+O"><span class="ico" data-icon="open"></span><span>Ouvrir</span></button>
+    <button class="btn btn-ghost needs-doc" id="btn-save" type="button" data-shortcut="Ctrl+S"><span class="ico" data-icon="save"></span><span>Enregistrer</span></button>
+    <button class="btn btn-ghost needs-doc" id="btn-more" type="button" aria-haspopup="menu" aria-expanded="false"><span class="ico" data-icon="more"></span><span class="sr-only">Plus d'actions</span></button>
+    <button class="btn btn-primary needs-doc" id="btn-sign" type="button"><span class="ico" data-icon="sign"></span><span>Signer avec ma clé</span></button>
+  </div>
+</header>
+
+<nav class="toolbar needs-doc-area" id="toolbar" aria-label="Outils">
+  <button class="icon-btn" id="btn-sidebar" type="button" aria-pressed="true" data-tip="Vignettes des pages"><span class="ico" data-icon="sidebar"></span><span class="sr-only">Vignettes des pages</span></button>
+  <div class="toolbar-sep"></div>
+  <div class="tool-group" role="toolbar" aria-label="Outils d'édition" id="tools"></div>
+  <div class="toolbar-sep"></div>
+  <div class="tool-group">
+    <button class="icon-btn" id="btn-undo" type="button" disabled><span class="ico" data-icon="undo"></span><span class="sr-only">Annuler</span></button>
+    <button class="icon-btn" id="btn-redo" type="button" disabled><span class="ico" data-icon="redo"></span><span class="sr-only">Rétablir</span></button>
+  </div>
+  <div class="toolbar-spacer"></div>
+  <div class="search-box" id="search-box">
+    <span class="ico" data-icon="search"></span>
+    <input id="search-input" type="search" placeholder="Rechercher" autocomplete="off" aria-label="Rechercher dans le document">
+    <span class="search-count" id="search-count"></span>
+    <button class="icon-btn icon-btn-sm" id="search-prev" type="button" data-tip="Précédent (Maj+Entrée)"><span class="ico" data-icon="up"></span><span class="sr-only">Résultat précédent</span></button>
+    <button class="icon-btn icon-btn-sm" id="search-next" type="button" data-tip="Suivant (Entrée)"><span class="ico" data-icon="down"></span><span class="sr-only">Résultat suivant</span></button>
+  </div>
+</nav>
+<div class="options-bar needs-doc-area" id="options-bar" hidden></div>
+
+<main class="workspace" id="workspace">
+  <aside class="sidebar" id="sidebar" aria-label="Pages">
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" id="tab-pages" aria-selected="true" type="button">Pages</button>
+      <button class="tab" role="tab" id="tab-toc" aria-selected="false" type="button">Signets</button>
+    </div>
+    <div class="sidebar-body" id="thumbs" role="tabpanel" aria-labelledby="tab-pages"></div>
+    <div class="sidebar-body" id="toc" role="tabpanel" aria-labelledby="tab-toc" hidden></div>
+    <div class="sidebar-foot">
+      <button class="btn btn-ghost btn-sm" id="btn-insert" type="button"><span class="ico" data-icon="insert"></span><span>Insérer un PDF</span></button>
+    </div>
+  </aside>
+
+  <section class="viewer-wrap" id="viewer-wrap">
+    <div class="sig-banner" id="sig-banner" hidden></div>
+    <div class="viewer" id="viewer" tabindex="0" aria-label="Document">
+      <div class="pages" id="pages"></div>
+    </div>
+    <div class="nav-pill needs-doc-area" id="nav-pill" role="group" aria-label="Navigation et zoom">
+      <button class="icon-btn" id="btn-prev-page" type="button" data-tip="Page précédente (Pg préc.)"><span class="ico" data-icon="up"></span><span class="sr-only">Page précédente</span></button>
+      <label class="page-nav"><span class="sr-only">Page</span><input id="page-input" class="page-input" inputmode="numeric" autocomplete="off" value="1"><span class="page-count" id="page-count">/ 1</span></label>
+      <button class="icon-btn" id="btn-next-page" type="button" data-tip="Page suivante (Pg suiv.)"><span class="ico" data-icon="down"></span><span class="sr-only">Page suivante</span></button>
+      <span class="pill-sep"></span>
+      <button class="icon-btn" id="btn-zoom-out" type="button" data-tip="Zoom arrière (Ctrl −)"><span class="ico" data-icon="minus"></span><span class="sr-only">Zoom arrière</span></button>
+      <button class="zoom-value" id="zoom-value" type="button" aria-haspopup="menu" aria-expanded="false" data-tip="Niveau de zoom">100 %</button>
+      <button class="icon-btn" id="btn-zoom-in" type="button" data-tip="Zoom avant (Ctrl +)"><span class="ico" data-icon="plus"></span><span class="sr-only">Zoom avant</span></button>
+    </div>
+    <div class="start" id="start" hidden>
+      <div class="start-card">
+        <h1 class="start-title">Ouvrir un document</h1>
+        <p class="start-lead">Lire, modifier le texte, annoter et signer avec votre clé.</p>
+        <div class="dropzone" id="dropzone">
+          <button class="btn btn-primary" id="start-open" type="button"><span class="ico" data-icon="open"></span><span>Choisir un PDF</span></button>
+          <span class="dropzone-hint">ou glissez un fichier PDF ici</span>
+        </div>
+        <div class="recent" id="recent"></div>
+      </div>
+    </div>
+    <div class="drop-overlay" id="drop-overlay" hidden><span>Déposez le PDF pour l'ouvrir</span></div>
+  </section>
+
+  <aside class="panel" id="panel" hidden aria-label="Panneau">
+    <div class="panel-head">
+      <div class="tabs" role="tablist" id="panel-tabs"></div>
+      <button class="icon-btn" id="panel-close" type="button" data-tip="Fermer (Échap)"><span class="ico" data-icon="close"></span><span class="sr-only">Fermer le panneau</span></button>
+    </div>
+    <div class="panel-body" id="panel-body"></div>
+  </aside>
+</main>
+
+<input type="file" id="file-input" accept="application/pdf,.pdf" hidden>
+<input type="file" id="insert-input" accept="application/pdf,.pdf" hidden>
+<div class="print-root" id="print-root" aria-hidden="true"></div>
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+<div class="modal-root" id="modal-root"></div>
+<div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+</body>
+</html>

@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+build/
+dist/
+installer_output/
+recette_output/
+assets/destripdf-256.png
