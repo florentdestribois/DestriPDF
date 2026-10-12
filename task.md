@@ -239,16 +239,47 @@ chaque release ». La 1.1.1 (cadre Acrobat) a été construite mais pas install�
   Windows acceptée) : 717 fichiers identiques au paquet de la release, entrée
   « DestriPDF 1.2.0 », « Ouvrir avec » en place, lancement sans droits correct.
 
+## Version 1.2.1 — 12 octobre 2026, soir
+
+Demande de Florent : « prépare la 1.2.1 et publie la release », après le
+DestriPDF resté sans fenêtre quand DestriCenter l'a lancé (fiche technique
+ouverte par `os.startfile`, 14 h 20) : WebView2 chargé mais en attente
+(LpcReply), aucun processus WebView2 créé, aucun journal. Écartés : variables
+`_PYI_*` héritées (essai), `PATH` avec le `_MEI` de DestriCenter (même
+WebView2Loader), élévation, mise à jour de WebView2, fichier (le même PDF
+s'ouvre depuis l'Explorateur).
+
+### Réalisé
+
+- [x] `destripdf/startup.py` : PATH hérité nettoyé des dossiers `_MEI…` d'une
+  autre application avant WebView2 ; démarrage journalisé (programme lanceur,
+  document, version de WebView2, dossiers retirés), durées « fenêtre affichée »
+  et « interface chargée ».
+- [x] Surveillance : fenêtre absente après 20 s → piles de tous les fils
+  d'exécution dans `logs\blocage-….txt`, relance unique détachée (hors de
+  l'objet tâche du lanceur si permis, variables PyInstaller et Python retirées,
+  dossier WebView2 de secours), sinon message natif et fin du processus.
+- [x] Recette `scripts\recette\surveillance_demarrage.py` (fenêtre bloquée
+  simulée, journal et réglages isolés).
+
+### Validations
+
+- [x] Tests : 85 (PATH, environnement de relance, surveillance, relevé des
+  piles, programme lanceur, version de WebView2).
+- [x] `build.ps1` 1.2.1 : 85 tests, fumée de l'exécutable figé 16/16,
+  installateur.
+- [x] Recette `surveillance_demarrage.py` sur l'exécutable figé : 9 contrôles
+  sur 9 (dossier étranger retiré du PATH, relevé puis relance unique, relance au
+  PATH propre, message, fin avec le code 1, deux relevés de piles). Le relevé
+  montre aussi le fil d'ouverture en attente de la fenêtre (`window.title`).
+- [x] Démarrage normal de l'exécutable figé : fenêtre en 0,43 s, interface en
+  0,84 s, première page en 1,0 s ; surveillance non déclenchée après 25 s ;
+  fermeture propre.
+
 ### Reste à faire / limites
 
-- [ ] DestriPDF lancé par DestriCenter (fiche technique ouverte par
-  `os.startfile`, 12 octobre 14 h 20) resté sans fenêtre plus d'une heure :
-  WebView2 chargé mais en attente (LpcReply), aucun processus WebView2 créé,
-  aucun journal. Écartés : variables `_PYI_*` héritées, `PATH` avec le `_MEI` de
-  DestriCenter (même WebView2Loader), élévation, mise à jour de WebView2, fichier
-  (le même PDF s'ouvre depuis l'Explorateur). Processus arrêté pour installer la
-  1.2.0. À faire : journal de démarrage et durée de création de WebView2, sortie
-  propre avec message si la fenêtre n'apparaît pas.
+- [ ] Cause du blocage au lancement par DestriCenter toujours inconnue : au
+  prochain cas, lire `logs\blocage-….txt` (piles) et le journal de démarrage.
 - [ ] Signature réelle avec la clé CertEurope puis contrôle dans Acrobat :
   « Signature valide » et « compatible LTV » attendus (seul essai impossible sans
   la clé et son PIN).

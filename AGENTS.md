@@ -28,6 +28,9 @@ une fenêtre pywebview (Edge WebView2). Voir `README.md` pour l'architecture.
   instantanés de `History`.
 - Texte modifiable : `_contents_textpage` (contenu de page seul, sans
   annotations ni champs).
+- Démarrage surveillé (`startup.py`) : jamais d'instance sans fenêtre. Au-delà
+  du délai, piles des fils d'exécution, relance unique (environnement nettoyé,
+  dossier WebView2 de secours), sinon message et fin du processus.
 - La clé privée ne quitte jamais son fournisseur : signature par
   `wincert.CertStore.sign_digest`, PIN saisi dans la fenêtre du fournisseur.
 - Serveur : 127.0.0.1, jeton dans le chemin, contrôle `Host`, en-tête

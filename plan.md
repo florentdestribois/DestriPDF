@@ -45,7 +45,10 @@ recomposition, horodatage par défaut (réglage facultatif), PAdES-LTA
 - Python 3.12, serveur HTTP de la bibliothèque standard sur `127.0.0.1`,
   port aléatoire, jeton secret dans le chemin, contrôle `Host`/`Origin`.
 - Fenêtre pywebview (Edge WebView2) ; mode navigateur `--serve` pour la
-  recette.
+  recette. Démarrage surveillé (`startup.py`) : PATH hérité d'une autre
+  application PyInstaller nettoyé ; sans fenêtre après 20 s, piles des fils
+  d'exécution, relance unique dans un environnement nettoyé avec un dossier
+  WebView2 de secours, sinon message et fin du processus.
 - Moteur PDF : PyMuPDF (MuPDF). Document ouvert depuis la mémoire (le fichier
   d'origine n'est jamais verrouillé). Un verrou global sérialise MuPDF.
 - Annuler/rétablir : instantanés complets du document après chaque opération,
@@ -120,6 +123,9 @@ recomposition, horodatage par défaut (réglage facultatif), PAdES-LTA
 - Export JPG : une image par page à 150 ou 300 ppp, résolution inscrite dans le
   fichier, très grande page réduite et signalée (tests, recette).
 - Aucune release GitHub sans son installateur vérifié (`scripts\release.ps1`).
+- Jamais d'instance sans fenêtre : fenêtre absente après 20 s → relance unique,
+  puis message et fin (tests, recette `surveillance_demarrage.py` sur
+  l'exécutable figé) ; démarrage journalisé avec le programme lanceur.
 - Avec une autorité qui publie ses listes de révocation, le document signé
   contient leur état et la chaîne se vérifie hors ligne ; autorité injoignable :
   signature sans LTV après un seul PIN ; certificat révoqué : refus sans PIN

@@ -15,7 +15,7 @@ signature (certificat eIDAS, marchés publics).
 
 ## Installation
 
-1. Lancer `installer_output\DestriPDF-1.2.0-installation.exe` (ou l'installateur
+1. Lancer `installer_output\DestriPDF-1.2.1-installation.exe` (ou l'installateur
    joint à la release GitHub de la version) et accepter la
    demande d'autorisation de Windows. DestriPDF s'installe pour tous les
    utilisateurs du poste dans `C:\Program Files\DestriPDF` (« Programmes » dans
@@ -163,7 +163,14 @@ défaut), adresse d'un service d'horodatage (TSA) facultatif, image de signature
   signature n'est produite. Contacter l'autorité de certification.
 - « Ce fichier est ouvert ou verrouillé par un autre logiciel » : fermer le
   fichier dans l'autre logiciel ou enregistrer sous un autre nom.
-- Journal : `%LOCALAPPDATA%\DestriPDF\logs\destripdf.log`.
+- DestriPDF ne s'affiche pas (ouverture depuis une autre application, comme
+  DestriCenter) : au-delà de 20 secondes sans fenêtre, il se relance une fois de
+  lui-même dans un environnement nettoyé ; sinon un message s'affiche et le
+  programme se ferme, sans rien modifier. Ouvrir le fichier depuis l'Explorateur
+  ou redémarrer l'ordinateur. Les fichiers `blocage-….txt` du dossier du journal
+  décrivent où l'affichage s'est arrêté.
+- Journal : `%LOCALAPPDATA%\DestriPDF\logs\destripdf.log` (démarrage, programme
+  qui a lancé DestriPDF, version de WebView2, durées d'affichage).
 
 ## Développement
 
@@ -207,6 +214,9 @@ release indique l'empreinte SHA-256 de l'installateur.
 
 - `destripdf/app.py` : lancement ; le serveur et la lecture du PDF partent avant
   la fenêtre pywebview (Edge WebView2).
+- `destripdf/startup.py` : démarrage surveillé (PATH hérité d'une autre
+  application PyInstaller nettoyé, fenêtre absente après 20 s : piles des fils
+  d'exécution, relance unique, sinon message et fin du processus).
 - `destripdf/server.py` : serveur HTTP local (127.0.0.1, port aléatoire, jeton
   secret dans le chemin, contrôle Host/Origin/en-tête applicatif, CSP stricte).
 - `destripdf/document.py` : document ouvert depuis la mémoire (le fichier n'est
@@ -226,6 +236,9 @@ Mode recette : `--serve --port N` sert l'interface à un navigateur ;
 `DESTRIPDF_TOKEN`, `DESTRIPDF_SETTINGS_DIR` et `DESTRIPDF_TEST_PFX` (+
 `DESTRIPDF_TEST_PFX_PASSWORD`) fixent le jeton, isolent les réglages et
 remplacent le magasin Windows par un certificat de test.
+`DESTRIPDF_TEST_STALL_WINDOW=1` et `DESTRIPDF_TEST_WINDOW_TIMEOUT` simulent une
+fenêtre bloquée : `scripts\recette\surveillance_demarrage.py <exe> <pdf>` vérifie
+la relance, le message et le relevé des piles sur un exécutable.
 
 ## Licences
 
