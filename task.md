@@ -284,8 +284,11 @@ s'ouvre depuis l'Explorateur).
   de suite. Le script de recette cliquait sur IDOK alors que le bouton du
   message porte l'identifiant 2 (instance d'essai restée à l'écran, arrêtée) :
   clic sur le vrai bouton, arrêt de l'instance d'essai en dernier recours.
-- [ ] Installation de la 1.2.1 sur le poste (poste en 1.2.0) : à la demande de
-  Florent, autorisation Windows.
+- [x] Installé sur le poste à la demande de Florent (1.2.0 → 1.2.1, autorisation
+  Windows acceptée) : installateur identique à celui de la release, 717 fichiers
+  identiques au paquet, entrée « DestriPDF 1.2.1 » ; lancement sans droits :
+  fenêtre en 0,45 s, interface en 0,9 s, surveillance non déclenchée après
+  25 s, fermeture propre.
 
 ### Reste à faire / limites
 
