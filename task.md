@@ -92,10 +92,27 @@
 - [x] Installateur : installation silencieuse, lancement, désinstallation sans
   résidu (programme, raccourcis, clés « Ouvrir avec »).
 
+### Installation et dépôt — 12 octobre
+
+- [x] Installé sur le poste de Florent par
+  `installer_output\DestriPDF-1.0.0-installation.exe` (par utilisateur,
+  `%LOCALAPPDATA%\Programs\DestriPDF`) : menu Démarrer (dossier DestriPDF),
+  Bureau, « Ouvrir avec », déclaration aux applications par défaut ; version
+  1.0.0 lancée en 1,2 s. Bundle postérieur à la dernière modification des
+  sources, fichiers d'interface identiques au dépôt.
+- [x] Dépôt privé https://github.com/florentdestribois/DestriPDF, branche
+  `main` : 55 fichiers, sans environnement, sortie de build, certificat ni clé
+  (certificats de test générés par `tests/pki.py`). Git du poste hors PATH :
+  push par `gh auth git-credential` en option de commande, sans configuration
+  globale.
+
 ### Reste à faire / limites
 
 - [ ] Première signature avec la vraie clé de Florent (PIN saisi par lui) et
   contrôle dans Adobe Reader : seul essai impossible sans la clé.
+- [ ] Si Florent le souhaite, DestriPDF comme lecteur PDF par défaut : Windows
+  réserve ce choix à l'utilisateur (clic droit › Ouvrir avec › Choisir une
+  autre application › DestriPDF › Toujours).
 - [ ] Clés accessibles uniquement par PKCS#11 (hors magasin Windows) : non gérées.
 - [ ] Recomposition d'un paragraphe entier : modification ligne par ligne.
 - [ ] OCR des documents numérisés : hors périmètre.
