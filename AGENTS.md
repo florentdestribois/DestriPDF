@@ -35,8 +35,12 @@ une fenêtre pywebview (Edge WebView2). Voir `README.md` pour l'architecture.
   CSS de `static/app.css`, modales maison (`ui.modal`), jamais
   `window.alert/confirm`. Échapper toute donnée issue du PDF (`textContent`,
   jamais `innerHTML`).
-- Aucun accès réseau en dehors de l'horodatage (TSA) explicitement réglé par
-  l'utilisateur. Tests : certificats et autorité d'horodatage simulés.
+- Accès réseau limité au moment de signer : état de révocation (OCSP/CRL) aux
+  adresses publiées dans la chaîne du certificat (réglage `sign_ltv`, actif par
+  défaut, comme Acrobat) et horodatage (TSA) réglé par l'utilisateur. Tests :
+  certificats, autorité de révocation et autorité d'horodatage simulés en local.
+- Une signature ne demande jamais deux fois le PIN : un échec de l'état de
+  révocation avant la signature retombe sur une signature sans LTV.
 - Ne jamais lire, afficher ni exporter les certificats ou clés de l'utilisateur
   pendant le développement : la recette remplace le magasin Windows par un PFX
   de test (`DESTRIPDF_TEST_PFX`).

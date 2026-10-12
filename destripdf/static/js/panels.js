@@ -295,7 +295,9 @@ export class Panel {
           r.reason ? el('dt', { text: 'Motif' }) : null, r.reason ? el('dd', { text: r.reason }) : null,
           r.location ? el('dt', { text: 'Lieu' }) : null, r.location ? el('dd', { text: r.location }) : null,
           el('dt', { text: 'Certificat' }), el('dd', { text: r.qualified ? 'Qualifié eIDAS' : 'Non qualifié' }),
-          el('dt', { text: 'Confiance' }), el('dd', { text: r.trust_detail || '—' })));
+          el('dt', { text: 'Confiance' }), el('dd', { text: r.trust_detail || '—' }),
+          el('dt', { text: 'Révocation' }), el('dd', { text: r.ltv ? 'État intégré : vérifiable à long terme (LTV)' : 'Non intégré : vérification en ligne seulement' }),
+          el('dt', { text: 'Heure' }), el('dd', { text: r.timestamp ? 'Attestée par une autorité d\'horodatage' : 'Horloge de l\'ordinateur du signataire' })));
       if (r.errors?.length) card.append(el('div', { class: 'sig-report-summary', text: r.errors.join(' ') }));
       const go = () => { if (r.page_index !== null && r.page_index !== undefined && r.rect) { this.app.viewer.scrollToPage(r.page_index); this.app.viewer.scrollToRect(r.page_index, r.rect); } };
       card.addEventListener('click', go);
@@ -419,6 +421,7 @@ export class Panel {
     body.append(el('div', { class: 'panel-actions panel-actions-sticky' }, sign));
     const notes = el('div', { class: 'panel-section' });
     notes.append(el('p', { class: 'help', text: 'Le code PIN de votre clé est demandé par la fenêtre de son logiciel. Le document signé est enregistré dans un nouveau fichier : l\'original reste intact.' }));
+    if (settings.sign_ltv !== false) notes.append(el('p', { class: 'help', text: 'Comme Acrobat, l\'état de révocation de votre certificat est demandé à votre autorité de certification et intégré au document (validation à long terme) : connexion Internet utilisée au moment de signer.' }));
     if (settings.timestamp_url) notes.append(el('p', { class: 'help', text: `Horodatage : ${settings.timestamp_url}` }));
     if (this.app.doc?.dirty) notes.append(el('p', { class: 'help', text: 'Les modifications en cours sont incluses dans le document signé.' }));
     body.append(notes);

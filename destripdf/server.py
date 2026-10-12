@@ -786,6 +786,7 @@ class Handler(BaseHTTPRequestHandler):
             timestamp_url=self.app.settings.get("timestamp_url") or "",
             hwnd=hwnd,
             password=session.password,
+            ltv=bool(self.app.settings.get("sign_ltv")),
         )
         with FITZ_LOCK:
             data = session.export_bytes()

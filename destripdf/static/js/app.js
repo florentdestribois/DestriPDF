@@ -619,14 +619,19 @@ class App {
       if (!path) return;
       body.path = path;
     }
-    const indicator = busy('Signature en cours. Si la fenêtre de votre clé le demande, saisissez votre code PIN.');
+    const indicator = busy(this.settings?.sign_ltv !== false
+      ? 'Vérification du certificat auprès de votre autorité, puis signature. Si la fenêtre de votre clé le demande, saisissez votre code PIN.'
+      : 'Signature en cours. Si la fenêtre de votre clé le demande, saisissez votre code PIN.');
     try {
       const data = await Api.post('api/sign', body);
       if (data.cancelled) return;
       this.panel.resetAfterSign();
       await this.onOpened(data.doc);
       this.panel.open('signatures');
-      toast(`Document signé et enregistré : ${data.doc.name}`, 'ok', { duration: 6000 });
+      const sig = data.signature || {};
+      if (sig.ltv_note) toast(`Document signé et enregistré : ${data.doc.name}. ${sig.ltv_note}`, 'info', { duration: 12000 });
+      else if (sig.ltv) toast(`Document signé et enregistré : ${data.doc.name}. État de révocation du certificat intégré (LTV).`, 'ok', { duration: 7000 });
+      else toast(`Document signé et enregistré : ${data.doc.name}`, 'ok', { duration: 6000 });
     } catch (err) {
       toast(err.message, 'error');
     } finally {
@@ -797,6 +802,8 @@ class App {
       el('option', { value: 'auto', text: 'Comme Windows' }), el('option', { value: 'light', text: 'Clair' }), el('option', { value: 'dark', text: 'Sombre' }));
     theme.value = s.theme || 'auto';
     const tsa = el('input', { class: 'text-input', value: s.timestamp_url || '', placeholder: 'Facultatif — ex. adresse d\'horodatage de votre autorité', autocomplete: 'off' });
+    const ltv = el('input', { type: 'checkbox' });
+    ltv.checked = s.sign_ltv !== false;
     const imageControls = el('div', { class: 'sig-preview' });
     const renderImage = () => {
       imageControls.textContent = '';
@@ -820,6 +827,9 @@ class App {
     const body = el('div', {},
       el('label', { class: 'field-label', text: 'Auteur des annotations' }), author,
       el('label', { class: 'field-label spaced', text: 'Apparence' }), theme,
+      el('label', { class: 'field-label spaced', text: 'Validation à long terme (LTV)' }),
+      el('label', { class: 'check' }, ltv, el('span', { text: 'Intégrer l\'état de révocation du certificat à chaque signature' })),
+      el('p', { class: 'help', text: "Comme Acrobat : au moment de signer, l'état de votre certificat est demandé à votre autorité de certification puis intégré au document, qui reste vérifiable même après l'expiration du certificat (connexion Internet nécessaire)." }),
       el('label', { class: 'field-label spaced', text: 'Horodatage des signatures (TSA)' }), tsa,
       el('p', { class: 'help', text: "Laissez vide pour signer sans horodatage. Avec une adresse, chaque signature est horodatée par ce service (connexion Internet nécessaire)." }),
       el('label', { class: 'field-label spaced', text: 'Image de signature manuscrite' }), imageControls);
@@ -831,7 +841,7 @@ class App {
     });
     if (result !== 'ok') return;
     try {
-      const data = await Api.post('api/settings', { author: author.value, theme: theme.value, timestamp_url: tsa.value });
+      const data = await Api.post('api/settings', { author: author.value, theme: theme.value, timestamp_url: tsa.value, sign_ltv: ltv.checked });
       this.settings = data.settings;
       this.applyTheme();
       toast('Réglages enregistrés.', 'ok');

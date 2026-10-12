@@ -1,6 +1,8 @@
 """Signature PAdES par la clé Windows (PFX en mémoire) et vérification."""
 
+import contextlib
 import hashlib
+import threading
 
 import pymupdf as fitz
 import pytest
@@ -136,7 +138,7 @@ def test_visible_signature_reads_upright_on_rotated_page(identity, store_factory
     for block in page.get_text("dict")["blocks"]:  # inclut l'apparence du champ de signature
         for line in block.get("lines", []):
             text = "".join(s["text"] for s in line["spans"])
-            if "numériquement" in text:
+            if "numérique" in text:
                 shown = fitz.Point(line["dir"]) * linear
                 assert abs(math.degrees(math.atan2(shown.y, shown.x))) < 1, (rotation, line["dir"])
                 found = True
@@ -274,7 +276,180 @@ def test_timestamp_from_local_tsa(identity, store_factory):
 
 
 def test_format_signing_time():
+    """Format de date d'Acrobat."""
     from datetime import datetime, timedelta, timezone
 
-    moment = datetime(2026, 10, 12, 14, 32, tzinfo=timezone(timedelta(hours=2)))
-    assert pades.format_signing_time(moment) == "Le 12/10/2026 à 14:32 (UTC+02:00)"
+    moment = datetime(2026, 10, 12, 14, 32, 5, tzinfo=timezone(timedelta(hours=2)))
+    assert pades.format_signing_time(moment) == "2026.10.12 14:32:05 +02'00'"
+    west = moment.replace(tzinfo=timezone(-timedelta(hours=3, minutes=30)))
+    assert pades.format_signing_time(west) == "2026.10.12 14:32:05 -03'30'"
+
+
+@pytest.mark.parametrize("box", [(300, 650, 540, 730), (60, 600, 150, 618)])
+def test_appearance_reads_like_acrobat(identity, store_factory, box):
+    """Nom en grand à gauche ; « Signature numérique de … », motif et date à droite."""
+    import re
+
+    rect = fitz.Rect(box)
+    signed, _ = pades.sign_pdf(
+        _sample_pdf(),
+        pades.SignOptions(thumbprint=hashlib.sha1(identity.der).hexdigest(), reason="Bon pour accord", appearance=pades.Appearance(1, box)),
+        store_factory=store_factory,
+    )
+    assert pades.validate_signatures(signed, trust_check=_trusted)[0].status == "valid"
+    page = fitz.open("pdf", signed)[1]
+    middle = rect.x0 + rect.width / 2
+    words = [w for w in page.get_text("words") if fitz.Rect(w[:4]).intersects(rect)]
+    left = [w for w in words if w[2] <= middle + 0.5]
+    right = [w for w in words if w[0] >= middle - 0.5]
+    assert " ".join(w[4] for w in left) == "Florent TEST"
+    details = " ".join(w[4] for w in right).replace("\xa0", " ")
+    assert "Signature numérique de Florent TEST" in details
+    assert "Motif : Bon pour accord" in details
+    assert re.search(r"Date : \d{4}\.\d{2}\.\d{2} \d{2}:\d{2}:\d{2} [+-]\d{2}'\d{2}'", details), details
+    name_height = max(w[3] - w[1] for w in left)
+    assert all(w[3] - w[1] < name_height for w in right), "le détail doit rester plus petit que le nom"
+
+
+# --- État de révocation intégré (LTV) -------------------------------------------
+
+
+@contextlib.contextmanager
+def _authority(crls: dict[str, bytes]):
+    """Autorité simulée : publie ses listes de révocation sur un serveur local."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    hits: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            name = self.path.rsplit("/", 1)[-1]
+            hits.append(name)
+            data = crls.get(name)
+            if data is None:
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/pkix-crl")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}", hits
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def _counting_factory(ident):
+    """Magasin du PFX de test qui compte les demandes de signature (saisies de PIN)."""
+    calls: list[int] = []
+
+    class CountingStore(wincert.CertStore):
+        def sign_digest(self, *args, **kwargs):
+            calls.append(1)
+            return super().sign_digest(*args, **kwargs)
+
+    def factory():
+        store = wincert.CertStore.from_pfx(ident.pfx, PFX_PASSWORD)
+        store.__class__ = CountingStore
+        return store
+
+    return factory, calls
+
+
+def test_ltv_embeds_revocation_and_verifies_offline():
+    import io
+
+    from asn1crypto import x509 as asn1_x509
+    from pyhanko.pdf_utils.reader import PdfFileReader
+    from pyhanko.sign.validation import validate_pdf_signature
+    from pyhanko.sign.validation.dss import DocumentSecurityStore
+
+    crls: dict[str, bytes] = {}
+    with _authority(crls) as (base, hits):
+        ident = make_test_pki(crl_base=base)
+        crls.update(ident.crls)
+        factory, calls = _counting_factory(ident)
+        signed, info = pades.sign_pdf(
+            _sample_pdf(),
+            pades.SignOptions(thumbprint=hashlib.sha1(ident.der).hexdigest(), appearance=pades.Appearance(0, (300, 650, 540, 730))),
+            store_factory=factory,
+        )
+    assert info["ltv"] and not info["ltv_note"], info
+    assert len(calls) == 1
+    assert {"racine.crl", "intermediaire.crl"} <= set(hits)
+
+    report = pades.validate_signatures(signed, trust_check=_trusted)[0]
+    assert report.intact and report.valid and report.status == "valid", report.summary
+    assert report.ltv
+    assert report.modification.startswith("aucune modification")
+
+    # Autorité arrêtée : l'état intégré suffit à vérifier la chaîne, sans réseau.
+    reader = PdfFileReader(io.BytesIO(signed))
+    dss = DocumentSecurityStore.read_dss(reader)
+    assert len(dss.crls) == 2
+    root = asn1_x509.Certificate.load(ident.chain_ders[-1])
+    context = dss.as_validation_context({"trust_roots": [root], "allow_fetching": False, "revocation_mode": "hard-fail"})
+    status = validate_pdf_signature(reader.embedded_signatures[0], context)
+    assert status.intact and status.valid and status.trusted, status.pretty_print_details()
+
+
+def test_ltv_tolerates_authority_clock_ahead():
+    """Horloge du poste en retard de 2 minutes sur l'autorité : l'état reste intégré."""
+    crls: dict[str, bytes] = {}
+    with _authority(crls) as (base, _hits):
+        ident = make_test_pki(crl_base=base, authority_clock_ahead=7 * 60)  # émis 2 min « dans le futur »
+        crls.update(ident.crls)
+        signed, info = pades.sign_pdf(
+            _sample_pdf(), pades.SignOptions(thumbprint=hashlib.sha1(ident.der).hexdigest()),
+            store_factory=lambda: wincert.CertStore.from_pfx(ident.pfx, PFX_PASSWORD),
+        )
+    assert info["ltv"], info["ltv_note"]
+    assert pades.validate_signatures(signed, trust_check=_trusted)[0].ltv
+
+
+def test_ltv_unreachable_authority_signs_once_without_ltv():
+    crls: dict[str, bytes] = {}
+    with _authority(crls) as (base, _hits):
+        ident = make_test_pki(crl_base=base)
+    # Serveur arrêté : l'autorité ne répond plus (poste hors ligne).
+    factory, calls = _counting_factory(ident)
+    signed, info = pades.sign_pdf(_sample_pdf(), pades.SignOptions(thumbprint=hashlib.sha1(ident.der).hexdigest()), store_factory=factory)
+    assert len(calls) == 1, "le code PIN ne doit être demandé qu'une fois"
+    assert not info["ltv"] and "non intégré" in info["ltv_note"]
+    report = pades.validate_signatures(signed, trust_check=_trusted)[0]
+    assert report.status == "valid" and report.covers_whole_file and not report.ltv
+
+
+def test_revoked_certificate_is_refused_before_pin():
+    crls: dict[str, bytes] = {}
+    with _authority(crls) as (base, _hits):
+        ident = make_test_pki(crl_base=base, revoked=True)
+        crls.update(ident.crls)
+        factory, calls = _counting_factory(ident)
+        with pytest.raises(pades.SigningError) as err:
+            pades.sign_pdf(_sample_pdf(), pades.SignOptions(thumbprint=hashlib.sha1(ident.der).hexdigest()), store_factory=factory)
+    assert err.value.code == "revoked"
+    assert "révoqué" in str(err.value)
+    assert not calls, "aucun code PIN pour un certificat révoqué"
+
+
+def test_ltv_disabled_makes_no_request():
+    crls: dict[str, bytes] = {}
+    with _authority(crls) as (base, hits):
+        ident = make_test_pki(crl_base=base)
+        crls.update(ident.crls)
+        signed, info = pades.sign_pdf(
+            _sample_pdf(), pades.SignOptions(thumbprint=hashlib.sha1(ident.der).hexdigest(), ltv=False),
+            store_factory=lambda: wincert.CertStore.from_pfx(ident.pfx, PFX_PASSWORD),
+        )
+    assert not hits
+    assert not info["ltv"] and not info["ltv_note"]
+    assert pades.validate_signatures(signed, trust_check=_trusted)[0].covers_whole_file

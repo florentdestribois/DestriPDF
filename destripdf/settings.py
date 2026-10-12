@@ -20,13 +20,14 @@ DEFAULTS = {
     "sign_location": "",
     "sign_visible": True,
     "sign_with_image": True,
+    "sign_ltv": True,
     "timestamp_url": "",
     "last_dir": "",
     "theme": "auto",
     "recent": [],
 }
 
-EDITABLE = {"author", "sign_reason", "sign_location", "sign_visible", "sign_with_image", "timestamp_url", "theme"}
+EDITABLE = {"author", "sign_reason", "sign_location", "sign_visible", "sign_with_image", "sign_ltv", "timestamp_url", "theme"}
 
 
 class Settings:

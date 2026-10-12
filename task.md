@@ -99,17 +99,67 @@
   `%LOCALAPPDATA%\Programs\DestriPDF`) : menu Démarrer (dossier DestriPDF),
   Bureau, « Ouvrir avec », déclaration aux applications par défaut ; version
   1.0.0 lancée en 1,2 s. Bundle postérieur à la dernière modification des
-  sources, fichiers d'interface identiques au dépôt.
+  sources, fichiers d'interface identiques au dépôt. Remplacée l'après-midi par
+  l'installation dans Program Files (voir version 1.1).
 - [x] Dépôt privé https://github.com/florentdestribois/DestriPDF, branche
   `main` : 55 fichiers, sans environnement, sortie de build, certificat ni clé
   (certificats de test générés par `tests/pki.py`). Git du poste hors PATH :
   push par `gh auth git-credential` en option de commande, sans configuration
   globale.
 
+## Version 1.1 — 12 octobre 2026, après-midi
+
+Demandes de Florent : « il faut l'installer dans le dossier C:\Programmes » ;
+« la signature numérique ne ressemble pas à la signature faite sur Acrobat.
+Cette signature doit avoir une vraie preuve de signature ».
+
+### Constat sur la première signature réelle (13 h 14, clé CertEurope)
+
+- [x] Fichier signé relu en lecture seule avec la vérification de DestriPDF :
+  signature PAdES valide, intacte, couvrant tout le fichier, certificat qualifié
+  eIDAS « CertEurope eID User », chaîne approuvée par Windows. Écarts avec
+  Acrobat : présentation du cadre, et état de révocation absent, alors
+  qu'Acrobat l'intègre par défaut (« compatible LTV ») et que CertEurope le
+  publie (OCSP et listes de révocation).
+
+### Réalisé
+
+- [x] Installateur administrateur : `C:\Program Files\DestriPDF` (`{autopf}`),
+  associations sous HKLM (`HKA`), `/CURRENTUSER` gardé pour les essais. Copie par
+  utilisateur désinstallée, réglages conservés.
+- [x] Cadre visible présenté comme dans Acrobat : nom en grand à gauche (ou image
+  manuscrite), « Signature numérique de … », motif, lieu et « Date : 2026.10.12
+  13:14:05 +02'00' » à droite ; un petit cadre réduit le texte sans le tronquer.
+- [x] Validation à long terme : état de révocation demandé à l'autorité avant le
+  PIN (certificat révoqué refusé sans PIN), intégré au DSS par une seconde mise à
+  jour ; autorité injoignable : signature sans LTV après un seul PIN, message
+  explicite ; horloge du poste en retard sur l'autorité tolérée
+  (`retroactive_revinfo`). Réglage « Validation à long terme » (actif par
+  défaut), panneau Signatures : lignes « Révocation » et « Heure ».
+- [x] Version 1.1.0 ; README, plan et consignes (accès réseau) à jour.
+
+### Validations
+
+- [x] Tests : 64 (dont apparence Acrobat, cadre minuscule, LTV intégrée puis
+  vérifiée hors ligne, horloge de l'autorité en avance, autorité injoignable,
+  certificat révoqué, LTV désactivée).
+- [x] Test de fumée 16/16 sur les sources et sur l'exécutable figé, avec une
+  autorité de révocation simulée (aiohttp bien embarqué).
+- [x] Recette Edge sur l'exécutable 1.1.0 : 27 parcours sur 27 ; captures
+  relues (panneau Signatures, Réglages, 1024×680).
+- [x] Installé dans `C:\Program Files\DestriPDF` (mise à jour 1.0.0 → 1.1.0,
+  autorisation Windows acceptée par Florent) : 717 fichiers identiques au
+  paquet, « Ouvrir avec » et raccourcis en place ; lancé sans droits
+  d'administrateur : fenêtre en 0,5 s, première page en 0,9 s, aucun fichier
+  écrit dans Program Files.
+- [ ] Relecture indépendante du changement (agent) : en cours au moment du
+  commit de la 1.1.0.
+
 ### Reste à faire / limites
 
-- [ ] Première signature avec la vraie clé de Florent (PIN saisi par lui) et
-  contrôle dans Adobe Reader : seul essai impossible sans la clé.
+- [ ] Signature réelle avec la clé CertEurope puis contrôle dans Acrobat :
+  « Signature valide » et « compatible LTV » attendus (seul essai impossible sans
+  la clé et son PIN).
 - [ ] Si Florent le souhaite, DestriPDF comme lecteur PDF par défaut : Windows
   réserve ce choix à l'utilisateur (clic droit › Ouvrir avec › Choisir une
   autre application › DestriPDF › Toujours).

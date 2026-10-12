@@ -26,7 +26,7 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path 'dist\DestriPDF\DestriPDF.exe')) { t
 Step "Test de fumée de l'exécutable figé"
 $work = Join-Path ([System.IO.Path]::GetTempPath()) ("destripdf-fumee-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force $work | Out-Null
-& $python -X utf8 scripts\recette\echantillons.py $work | Out-Null
+& $python -X utf8 scripts\recette\echantillons.py $work --crl-port 8798 | Out-Null
 $env:DESTRIPDF_TOKEN = 'fumee'
 $env:DESTRIPDF_TEST_PFX = Join-Path $work 'test.pfx'
 $env:DESTRIPDF_TEST_PFX_PASSWORD = 'test-destripdf'

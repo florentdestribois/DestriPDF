@@ -6,8 +6,10 @@ sur le démarrage de l'application.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
+import logging
 import os
 import tempfile
 from dataclasses import dataclass, field
@@ -26,14 +28,24 @@ from pyhanko.sign.validation import validate_pdf_signature
 from pyhanko.sign.validation.status import SignatureCoverageLevel
 from pyhanko.stamp import StaticStampStyle
 from pyhanko_certvalidator import ValidationContext
+from pyhanko_certvalidator.errors import RevokedError
 from pyhanko_certvalidator.registry import SimpleCertificateStore
 
 from ..document import FITZ_LOCK
 from . import wincert
 
+log = logging.getLogger("destripdf")
+
 FONT_DIR = Path(__file__).resolve().parent.parent / "static" / "fonts"
 INK = (0x29 / 255, 0x32 / 255, 0x3A / 255)
-INK_MUTED = (0x5F / 255, 0x69 / 255, 0x72 / 255)
+SIGNED_BY = "Signature numérique de"  # libellé d'Acrobat en français
+LINE_GAP = 1.22
+REVOCATION_TIMEOUT = 8  # secondes par requête OCSP ou CRL auprès de l'autorité
+LTV_UNAVAILABLE = (
+    "État de révocation du certificat non intégré : l'autorité de certification n'a pas pu être "
+    "interrogée (connexion Internet ?). La signature est valide, mais Acrobat ne la dira pas "
+    "« compatible LTV »."
+)
 
 
 class SigningError(Exception):
@@ -63,6 +75,9 @@ class SignOptions:
     timestamp_url: str = ""
     hwnd: int | None = None
     password: str | None = None  # PDF protégé : mot de passe saisi à l'ouverture
+    # État de révocation (OCSP/CRL) demandé à l'autorité et intégré au document,
+    # comme le fait Acrobat : signature « compatible LTV ».
+    ltv: bool = True
 
 
 StoreFactory = Callable[[], wincert.CertStore]
@@ -135,23 +150,72 @@ def _font(name: str, text: str) -> fitz.Font:
 
 
 def format_signing_time(moment: datetime) -> str:
+    """Date de signature au format d'Acrobat : « 2026.10.12 13:14:05 +02'00' »."""
     offset = moment.utcoffset()
     minutes = int(offset.total_seconds() // 60) if offset is not None else 0
     sign = "+" if minutes >= 0 else "-"
     minutes = abs(minutes)
-    return f"Le {moment:%d/%m/%Y à %H:%M} (UTC{sign}{minutes // 60:02d}:{minutes % 60:02d})"
+    return f"{moment:%Y.%m.%d %H:%M:%S} {sign}{minutes // 60:02d}'{minutes % 60:02d}'"
 
 
-def _fit_lines(lines: list[tuple[str, fitz.Font, float]], width: float, height: float) -> float:
-    """Taille de base qui fait tenir toutes les lignes (facteur relatif par ligne)."""
-    line_gap = 1.28
-    total_units = sum(factor for _, _, factor in lines) * line_gap
-    size = height / max(total_units, 1)
-    for text, font, factor in lines:
-        units = font.text_length(text, fontsize=1) * factor
-        if units > 0:
-            size = min(size, width / units)
-    return max(3.5, min(size, 14))
+def _wrap(text: str, font: fitz.Font, size: float, width: float, *, force: bool = False) -> list[str] | None:
+    """Coupe le texte aux espaces (jamais aux espaces insécables) pour tenir dans
+    `width`. None si un mot est trop large, sauf `force` : coupure par caractères."""
+    lines: list[str] = []
+    current = ""
+    for word in text.split(" "):
+        if not word:
+            continue
+        candidate = f"{current} {word}" if current else word
+        if font.text_length(candidate, fontsize=size) <= width:
+            current = candidate
+            continue
+        if current:
+            lines.append(current)
+        current = word
+        if font.text_length(word, fontsize=size) <= width:
+            continue
+        if not force:
+            return None
+        current = ""
+        for char in word:
+            if current and font.text_length(current + char, fontsize=size) > width:
+                lines.append(current)
+                current = char
+            else:
+                current += char
+    if current:
+        lines.append(current)
+    return lines
+
+
+def _fit_block(paragraphs: list[str], font: fitz.Font, box: fitz.Rect, max_size: float, min_size: float = 1.0) -> tuple[float, list[str]]:
+    """Plus grande taille (au quart de point) où les paragraphes tiennent dans la
+    boîte. Comme Acrobat, un petit cadre réduit le texte au lieu de le tronquer."""
+    size = max(min_size, max_size)
+    while size >= min_size:
+        lines: list[str] = []
+        for paragraph in paragraphs:
+            wrapped = _wrap(paragraph, font, size, box.width)
+            if wrapped is None:
+                break
+            lines.extend(wrapped)
+        else:
+            if len(lines) * size * LINE_GAP <= box.height:
+                return size, lines
+        size -= 0.25
+    lines = [line for p in paragraphs for line in (_wrap(p, font, min_size, box.width, force=True) or [])]
+    return min_size, lines
+
+
+def _draw_block(page: fitz.Page, lines: list[str], font: fitz.Font, size: float, box: fitz.Rect) -> None:
+    """Lignes alignées à gauche, bloc centré verticalement dans la boîte."""
+    y = box.y0 + max(0.0, (box.height - len(lines) * size * LINE_GAP) / 2)
+    writer = fitz.TextWriter(page.rect, color=INK)
+    for line in lines:
+        y += size * LINE_GAP
+        writer.append((box.x0, y - size * 0.28), line, font=font, fontsize=size)
+    writer.write_text(page)
 
 
 def build_appearance_pdf(
@@ -167,42 +231,42 @@ def build_appearance_pdf(
 ) -> bytes:
     """Dessine le cadre visible (orientation affichée) dans un PDF d'une page.
 
-    `width`/`height` sont les dimensions du champ dans l'espace non pivoté de la
-    page ; le dessin est tourné pour apparaître droit une fois la page pivotée.
+    Présentation d'Acrobat : à gauche le nom du signataire en grand (ou l'image
+    de la signature manuscrite), à droite « Signature numérique de … », le motif,
+    le lieu et la date. `width`/`height` sont les dimensions du champ dans
+    l'espace non pivoté de la page ; le dessin est tourné pour apparaître droit
+    une fois la page pivotée.
     """
     disp_w, disp_h = (height, width) if rotation % 180 else (width, height)
     src = fitz.open()
     page = src.new_page(width=disp_w, height=disp_h)
     pad = max(2.0, min(disp_w, disp_h) * 0.06)
-    text_x0 = pad
+    column = max(4.0, (disp_w - 3 * pad) / 2)
+    left = fitz.Rect(pad, pad, pad + column, disp_h - pad)
+    right = fitz.Rect(left.x1 + pad, pad, disp_w - pad, disp_h - pad)
+
+    name_size = None
     if image_png:
-        img_box = fitz.Rect(pad, pad, pad + (disp_w - 2 * pad) * 0.42, disp_h - pad)
         try:
-            page.insert_image(img_box, stream=image_png, keep_proportion=True)
-            text_x0 = img_box.x1 + pad
-        except Exception:  # noqa: BLE001 - image illisible : signature texte seule
-            text_x0 = pad
-    texts: list[tuple[str, str, float, tuple]] = [
-        ("Signé numériquement par", "Roboto-Regular.ttf", 0.82, INK_MUTED),
-        (signer_name, "Roboto-Medium.ttf", 1.18, INK),
-        (format_signing_time(signed_at), "Roboto-Regular.ttf", 0.82, INK_MUTED),
-    ]
+            page.insert_image(left, stream=image_png, keep_proportion=True)
+        except Exception:  # noqa: BLE001 - image illisible : nom en toutes lettres
+            image_png = None
+    if not image_png:
+        name_font = _font("Roboto-Regular.ttf", signer_name)
+        name_size, name_lines = _fit_block([signer_name], name_font, left, max_size=36)
+        _draw_block(page, name_lines, name_font, name_size, left)
+
+    paragraphs = [f"{SIGNED_BY} {signer_name}"]
     if reason:
-        texts.append((f"Motif : {reason}", "Roboto-Regular.ttf", 0.82, INK_MUTED))
+        paragraphs.append(f"Motif : {reason}")
     if location:
-        texts.append((f"Lieu : {location}", "Roboto-Regular.ttf", 0.82, INK_MUTED))
-    lines = [(text, _font(font_name, text), factor, color) for text, font_name, factor, color in texts]
-    area_w = max(10.0, disp_w - text_x0 - pad)
-    area_h = max(10.0, disp_h - 2 * pad)
-    size = _fit_lines([(t, f, k) for t, f, k, _ in lines], area_w, area_h)
-    block_h = sum(k for _, _, k, _ in lines) * size * 1.28
-    y = pad + max(0.0, (area_h - block_h) / 2)
-    for text, font, factor, color in lines:
-        fs = size * factor
-        y += fs * 1.28
-        writer = fitz.TextWriter(page.rect, color=color)
-        writer.append((text_x0, y - fs * 0.28), text, font=font, fontsize=fs)
-        writer.write_text(page)
+        paragraphs.append(f"Lieu : {location}")
+    paragraphs.append(f"Date : {format_signing_time(signed_at)}")
+    details_font = _font("Roboto-Regular.ttf", " ".join(paragraphs))
+    # Comme Acrobat : le détail reste nettement plus petit que le nom.
+    cap = 11.0 if name_size is None else max(1.0, min(11.0, name_size * 0.62))
+    size, lines = _fit_block(paragraphs, details_font, right, max_size=cap)
+    _draw_block(page, lines, details_font, size, right)
     if rotation % 360 == 0:
         return src.tobytes(garbage=3, deflate=True)
     out = fitz.open()
@@ -245,30 +309,14 @@ def _widget_box(pdf_bytes: bytes, appearance: Appearance, password: str | None =
         doc.close()
 
 
-def sign_pdf(
-    pdf_bytes: bytes,
-    options: SignOptions,
-    *,
-    store_factory: StoreFactory = wincert.CertStore.system,
-    signer_override: signers.Signer | None = None,
-) -> tuple[bytes, dict]:
-    """Ajoute une signature PAdES (mise à jour incrémentale) et renvoie le PDF signé."""
-    if signer_override is not None:
-        signer, signer_name = signer_override, signer_override.subject_name or "Signataire"
-    else:
-        try:
-            signer, entry = prepare_signer(options, store_factory)
-        except wincert.WinCertError as err:
-            raise SigningError(str(err), err.code) from err
-        signer_name = entry.subject_cn or entry.email or "Signataire"
-
+def _open_writer(pdf_bytes: bytes, password: str | None) -> IncrementalPdfFileWriter:
     writer = IncrementalPdfFileWriter(io.BytesIO(pdf_bytes), strict=False)
     if writer.prev.encrypted:
         # Une mise à jour d'un PDF chiffré garde son chiffrement : il faut le mot de passe.
         from pyhanko.pdf_utils.crypt.api import AuthStatus
 
         try:
-            auth = writer.encrypt(options.password or "")
+            auth = writer.encrypt(password or "")
         except Exception as exc:  # noqa: BLE001
             raise SigningError("Ce PDF est protégé par un mot de passe : rouvrez-le avec son mot de passe.", "password") from exc
         if getattr(auth, "status", AuthStatus.FAILED) == AuthStatus.FAILED:
@@ -280,22 +328,87 @@ def sign_pdf(
 
         if isinstance(writer._encrypt, generic.DictionaryObject):
             writer._encrypt = writer.add_object(writer._encrypt)
-    field_name = _unique_field_name(writer)
-    signed_at = datetime.now().astimezone()
-    meta = signers.PdfSignatureMetadata(
-        field_name=field_name,
-        md_algorithm="sha256",
-        reason=options.reason or None,
-        location=options.location or None,
-        contact_info=options.contact or None,
-        name=signer_name,
-        subfilter=fields.SigSeedSubFilter.PADES,
+    return writer
+
+
+def _declares_revocation(cert: asn1_x509.Certificate) -> bool:
+    return bool(cert.ocsp_urls or cert.crl_distribution_points)
+
+
+def _revocation_context(signer: signers.Signer, with_timestamp: bool):
+    """Contexte qui interroge l'autorité (OCSP, CRL) pour l'état de révocation.
+
+    Racines : celles de la chaîne construite par Windows, plus, avec un
+    horodatage, les autorités racines approuvées par Windows (chaîne de la TSA).
+    Renvoie (contexte, connexions à fermer), ou None si la chaîne est incomplète.
+    """
+    from pyhanko_certvalidator.fetchers.aiohttp_fetchers import AIOHttpFetcherBackend
+
+    certs = [signer.signing_cert, *(signer.cert_registry or [])]
+    roots = [c for c in certs if c.self_issued]
+    if not roots:
+        return None
+    if with_timestamp:
+        roots += [asn1_x509.Certificate.load(der) for der in wincert.trusted_root_ders()]
+    backend = AIOHttpFetcherBackend(per_request_timeout=REVOCATION_TIMEOUT)
+    context = ValidationContext(
+        trust_roots=roots,
+        other_certs=[c for c in certs[1:] if not c.self_issued],
+        allow_fetching=True,
+        # Toute source déclarée par un certificat doit répondre : l'état intégré est complet.
+        revocation_mode="hard-fail",
+        # Une réponse datée de quelques secondes « dans le futur » (horloge du poste en
+        # retard sur celle de l'autorité) reste valable.
+        retroactive_revinfo=True,
+        fetcher_backend=backend,
     )
+    return context, backend
+
+
+async def _run_signer(pdf_signer: signers.PdfSigner, writer: IncrementalPdfFileWriter, backend) -> bytes:
+    try:
+        output = await pdf_signer.async_sign_pdf(writer, output=io.BytesIO())
+        return output.getvalue()
+    finally:
+        if backend is not None:
+            await backend.close()
+
+
+def sign_pdf(
+    pdf_bytes: bytes,
+    options: SignOptions,
+    *,
+    store_factory: StoreFactory = wincert.CertStore.system,
+    signer_override: signers.Signer | None = None,
+) -> tuple[bytes, dict]:
+    """Ajoute une signature PAdES (mise à jour incrémentale) et renvoie le PDF signé.
+
+    Avec `options.ltv`, l'état de révocation de la chaîne est demandé à l'autorité
+    avant la saisie du PIN (un certificat révoqué est refusé), puis intégré au
+    document (DSS) dans une seconde mise à jour, comme le fait Acrobat.
+    """
+    if signer_override is not None:
+        signer, signer_name = signer_override, signer_override.subject_name or "Signataire"
+    else:
+        try:
+            signer, entry = prepare_signer(options, store_factory)
+        except wincert.WinCertError as err:
+            raise SigningError(str(err), err.code) from err
+        signer_name = entry.subject_cn or entry.email or "Signataire"
+
+    field_name = _unique_field_name(_open_writer(pdf_bytes, options.password))
+    signed_at = datetime.now().astimezone()
     timestamper = None
     if options.timestamp_url:
         from pyhanko.sign.timestamps import HTTPTimeStamper
 
         timestamper = HTTPTimeStamper(options.timestamp_url, timeout=15)
+    revocation = None
+    ltv_note = ""
+    if options.ltv and signer.signing_cert is not None and _declares_revocation(signer.signing_cert):
+        revocation = _revocation_context(signer, timestamper is not None)
+        if revocation is None:
+            ltv_note = "État de révocation du certificat non intégré : chaîne de certification incomplète sur ce poste."
 
     tmp_path = None
     try:
@@ -329,9 +442,39 @@ def sign_pdf(
         else:
             style = None
             spec = fields.SigFieldSpec(sig_field_name=field_name)
-        pdf_signer = signers.PdfSigner(meta, signer=signer, timestamper=timestamper, stamp_style=style, new_field_spec=spec)
-        output = pdf_signer.sign_pdf(writer, output=io.BytesIO())
-        signed = output.getvalue()
+
+        def attempt(revocation_ctx) -> bytes:
+            context, backend = revocation_ctx or (None, None)
+            meta = signers.PdfSignatureMetadata(
+                field_name=field_name,
+                md_algorithm="sha256",
+                reason=options.reason or None,
+                location=options.location or None,
+                contact_info=options.contact or None,
+                name=signer_name,
+                subfilter=fields.SigSeedSubFilter.PADES,
+                embed_validation_info=context is not None,
+                validation_context=context,
+                signer_key_usage=set(),  # l'usage de la clé n'empêche pas de collecter l'état
+            )
+            pdf_signer = signers.PdfSigner(meta, signer=signer, timestamper=timestamper, stamp_style=style, new_field_spec=spec)
+            return asyncio.run(_run_signer(pdf_signer, _open_writer(pdf_bytes, options.password), backend))
+
+        try:
+            signed = attempt(revocation)
+        except Exception as exc:  # noqa: BLE001
+            # PIN annulé, ou échec après la signature : jamais de seconde demande de PIN.
+            if revocation is None or getattr(signer, "signatures_made", 0) or _find_cause(exc, wincert.WinCertError) is not None:
+                raise
+            if _find_cause(exc, RevokedError) is not None:
+                raise SigningError(
+                    "Votre certificat est révoqué : l'autorité de certification l'a déclaré invalide. "
+                    "Une signature faite avec lui n'aurait aucune valeur.",
+                    "revoked",
+                ) from exc
+            log.warning("état de révocation indisponible, signature sans LTV : %r", exc)
+            revocation, ltv_note = None, LTV_UNAVAILABLE
+            signed = attempt(None)
     except SigningError:
         raise
     except Exception as exc:  # noqa: BLE001 - message clair, jamais de trace brute
@@ -345,7 +488,14 @@ def sign_pdf(
                 os.unlink(tmp_path)
             except OSError:
                 pass
-    return signed, {"field_name": field_name, "signer": signer_name, "signed_at": signed_at.isoformat()}
+    return signed, {
+        "field_name": field_name,
+        "signer": signer_name,
+        "signed_at": signed_at.isoformat(),
+        "ltv": revocation is not None,
+        "ltv_note": ltv_note,
+        "timestamp": timestamper is not None,
+    }
 
 
 # --- Vérification ------------------------------------------------------------
@@ -366,6 +516,8 @@ class SignatureReport:
     trusted: bool = False
     trust_detail: str = ""
     qualified: bool = False
+    ltv: bool = False  # état de révocation intégré, suffisant pour vérifier hors ligne
+    timestamp: bool = False  # heure attestée par une autorité d'horodatage
     status: str = "invalid"  # valid, warning, invalid
     summary: str = ""
     page_index: int | None = None
@@ -378,7 +530,7 @@ class SignatureReport:
 
 _MODIFICATIONS = {
     "NONE": "aucune modification depuis la signature",
-    "LTA_UPDATES": "seules des données de validation ont été ajoutées",
+    "LTA_UPDATES": "aucune modification depuis la signature (données de validation ajoutées)",
     "FORM_FILLING": "des champs de formulaire ou d'autres signatures ont été ajoutés",
     "ANNOTATIONS": "des annotations ont été ajoutées après la signature",
     "OTHER": "le document a été modifié après la signature",
@@ -396,6 +548,7 @@ def validate_signatures(
     reader = PdfFileReader(io.BytesIO(pdf_bytes), strict=False)
     if reader.encrypted:
         reader.decrypt(password or "")
+    dss = _read_dss(reader)
     reports: list[SignatureReport] = []
     for embedded in reader.embedded_signatures:
         report = SignatureReport(field_name=embedded.field_name or "")
@@ -421,8 +574,10 @@ def validate_signatures(
             report.covers_whole_file = status.coverage == SignatureCoverageLevel.ENTIRE_FILE
             level = status.modification_level
             report.modification = _MODIFICATIONS.get(level.name if level is not None else "OTHER", "")
+            report.timestamp = status.timestamp_validity is not None
             if status.signer_reported_dt is not None:
                 report.signed_at = status.signer_reported_dt.astimezone().isoformat()
+                report.ltv = dss is not None and _ltv_complete(embedded, dss, status.signer_reported_dt)
         except Exception as exc:  # noqa: BLE001
             report.errors.append(f"Vérification impossible : {exc}")
         _summarise(report)
@@ -430,6 +585,39 @@ def validate_signatures(
     with FITZ_LOCK:
         _locate_widgets(pdf_bytes, reports, password)
     return reports
+
+
+def _read_dss(reader: PdfFileReader):
+    """Magasin de validation du document (DSS), s'il contient un état de révocation."""
+    from pyhanko.sign.validation.dss import DocumentSecurityStore
+
+    try:
+        dss = DocumentSecurityStore.read_dss(reader)
+    except Exception:  # noqa: BLE001 - pas de DSS, ou DSS illisible
+        return None
+    return dss if (dss.ocsps or dss.crls) else None
+
+
+def _ltv_complete(embedded, dss, moment: datetime) -> bool:
+    """L'état de révocation intégré suffit-il à vérifier la chaîne hors ligne, à la
+    date de signature ? C'est ce qu'Acrobat appelle une signature « compatible LTV »."""
+    from pyhanko_certvalidator import CertificateValidator
+
+    try:
+        others = list(embedded.other_embedded_certs)
+        roots = [c for c in [*others, *dss.load_certs()] if c.self_issued]
+        if not roots:
+            return False
+        # État obtenu juste avant la signature, ou daté par une autorité à l'horloge en
+        # avance : `retroactive_revinfo` l'accepte à la date de signature.
+        context = dss.as_validation_context(
+            {"trust_roots": roots, "allow_fetching": False, "revocation_mode": "hard-fail", "moment": moment, "retroactive_revinfo": True}
+        )
+        validator = CertificateValidator(embedded.signer_cert, intermediate_certs=others, validation_context=context)
+        asyncio.run(validator.async_validate_usage(set()))
+        return True
+    except Exception:  # noqa: BLE001 - état absent, incomplet ou invalide
+        return False
 
 
 def _summarise(report: SignatureReport) -> None:

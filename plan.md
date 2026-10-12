@@ -23,14 +23,20 @@ Inclus :
   code PIN saisi dans la fenêtre du fournisseur de la clé), visible ou
   invisible, image manuscrite facultative ; vérification des signatures à
   l'ouverture ;
+- signature présentée comme dans Acrobat (nom à gauche, « Signature numérique
+  de … » et date au format d'Acrobat à droite) et, comme Acrobat, état de
+  révocation du certificat intégré au document (validation à long terme,
+  « compatible LTV ») ; demande de Florent du 12 octobre après-midi ;
 - signature manuscrite simple (image), signalée comme sans valeur électronique ;
 - pages : pivoter, supprimer, déplacer, insérer depuis un autre PDF ;
 - annuler/rétablir, enregistrer, enregistrer sous, imprimer ;
-- installateur Windows par utilisateur, entrée « Ouvrir avec ».
+- installateur Windows pour tous les utilisateurs du poste (Program Files,
+  droits d'administrateur ; `/CURRENTUSER` pour les essais), entrée « Ouvrir
+  avec ».
 
 Exclus de cette version : OCR, formulaires XFA, édition de paragraphes avec
-recomposition, horodatage qualifié et LTV par défaut (l'horodatage reste un
-réglage facultatif), lecteurs PKCS#11 hors magasin Windows.
+recomposition, horodatage par défaut (réglage facultatif), PAdES-LTA
+(horodatage de document), lecteurs PKCS#11 hors magasin Windows.
 
 ## Architecture
 
@@ -59,7 +65,13 @@ réglage facultatif), lecteurs PKCS#11 hors magasin Windows.
 - Signature : pyHanko (PAdES B-B, `ETSI.CAdES.detached`, SHA-256) avec un
   signataire qui délègue la signature brute à Windows (CryptoAPI/CNG par
   ctypes), chaîne de certification construite par Windows. Apparence visible
-  dessinée par PyMuPDF puis importée par pyHanko.
+  dessinée par PyMuPDF (présentation d'Acrobat) puis importée par pyHanko.
+- Validation à long terme : si le certificat publie un état de révocation,
+  pyHanko le demande à l'autorité (OCSP/CRL, aiohttp) avant le PIN — un
+  certificat révoqué est refusé — puis l'écrit dans le DSS par une seconde mise
+  à jour. Autorité injoignable : signature sans LTV, un seul PIN. La
+  vérification juge « LTV » une signature dont la chaîne se vérifie hors ligne
+  avec le seul DSS, à la date de signature.
 - Annotations sur page pivotée : coordonnées échangées dans l'espace affiché ;
   quadrilatères de surlignage transformés coin par coin ; image de signature
   pré-tournée ; texte libre composé avec `rotate`.
@@ -92,6 +104,13 @@ réglage facultatif), lecteurs PKCS#11 hors magasin Windows.
   (CNG) est valide pour pyHanko (intégrité, couverture complète) ; une
   annulation de saisie du PIN produit un message clair sans fichier partiel.
 - Signer un document déjà signé conserve la première signature valide.
+- Le cadre visible se lit comme celui d'Acrobat : nom à gauche, « Signature
+  numérique de … » et « Date : AAAA.MM.JJ HH:MM:SS +HH'MM' » à droite (test).
+- Avec une autorité qui publie ses listes de révocation, le document signé
+  contient leur état et la chaîne se vérifie hors ligne ; autorité injoignable :
+  signature sans LTV après un seul PIN ; certificat révoqué : refus sans PIN
+  (tests, et test de fumée de l'exécutable figé avec autorité simulée).
 - Annuler/rétablir couvre toutes les opérations de modification.
-- Aucune requête externe ; API inaccessible sans jeton ou avec un `Host`
-  étranger.
+- Aucune requête externe hors du moment de signer (état de révocation auprès
+  de l'autorité du certificat, horodatage réglé) ; API inaccessible sans jeton
+  ou avec un `Host` étranger.

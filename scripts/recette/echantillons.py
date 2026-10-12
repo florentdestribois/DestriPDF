@@ -1,6 +1,8 @@
 """Matériel de recette : PDF d'essai, PFX de test, dossier de réglages isolé.
 
-Usage : python scripts/recette/echantillons.py <dossier>
+Usage : python scripts/recette/echantillons.py <dossier> [--crl-port N]
+Avec --crl-port, le certificat de test déclare des listes de révocation publiées
+sur http://127.0.0.1:N/ (fichiers écrits dans <dossier>/crl, servis par smoke.py).
 """
 import sys
 from pathlib import Path
@@ -29,7 +31,14 @@ for i in range(10):
 doc.set_toc([[1, "Devis", 1], [1, "Conditions générales", 2], [1, "Chapitres", 3], [2, "Chapitre 1", 3], [2, "Chapitre 10", 12]])
 (root / "dossier.pdf").write_bytes(doc.tobytes(garbage=3, deflate=True))
 
-identity = make_test_pki()
+crl_port = int(sys.argv[sys.argv.index("--crl-port") + 1]) if "--crl-port" in sys.argv else None
+identity = make_test_pki(crl_base=f"http://127.0.0.1:{crl_port}" if crl_port else None)
 (root / "test.pfx").write_bytes(identity.pfx)
+if crl_port:
+    crl_dir = root / "crl"
+    crl_dir.mkdir(exist_ok=True)
+    (crl_dir / "port").write_text(str(crl_port), encoding="ascii")
+    for name, data in identity.crls.items():
+        (crl_dir / name).write_bytes(data)
 print(root)
 print("password", PFX_PASSWORD)

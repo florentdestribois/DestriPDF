@@ -8,14 +8,18 @@ signature (certificat eIDAS, marchés publics).
 
 - Ouverture d'un PDF en 1 seconde environ, première page comprise.
 - Signature PAdES avec le certificat de la clé USB : le code PIN est demandé par
-  le logiciel de la clé, la clé privée ne quitte jamais la clé.
-- Aucun accès Internet ; l'horodatage reste un réglage facultatif.
+  le logiciel de la clé, la clé privée ne quitte jamais la clé. Présentation et
+  validation à long terme (LTV) identiques à celles d'Acrobat.
+- Accès Internet au seul moment de signer : état de révocation du certificat
+  auprès de l'autorité de certification (désactivable) et horodatage facultatif.
 
 ## Installation
 
-1. Lancer `installer_output\DestriPDF-1.0.0-installation.exe`. L'installation se
-   fait pour l'utilisateur courant, sans droits d'administrateur, dans
-   `%LOCALAPPDATA%\Programs\DestriPDF`.
+1. Lancer `installer_output\DestriPDF-1.1.0-installation.exe` et accepter la
+   demande d'autorisation de Windows. DestriPDF s'installe pour tous les
+   utilisateurs du poste dans `C:\Program Files\DestriPDF` (« Programmes » dans
+   l'Explorateur). En ligne de commande, `/CURRENTUSER` installe pour le seul
+   utilisateur courant, sans droits, dans `%LOCALAPPDATA%\Programs\DestriPDF`.
 2. Option « Proposer DestriPDF pour ouvrir les fichiers PDF » : DestriPDF apparaît
    dans « Ouvrir avec » et dans Paramètres › Applications › Applications par
    défaut. Windows laisse à l'utilisateur le choix de l'application par défaut :
@@ -24,9 +28,9 @@ signature (certificat eIDAS, marchés publics).
 3. Le moteur Microsoft Edge WebView2 est présent sur Windows 11 ; l'installateur
    prévient s'il manque.
 
-La désinstallation (Paramètres › Applications) retire le programme et ses
-entrées « Ouvrir avec ». Les réglages et l'image de signature restent dans
-`%APPDATA%\DestriPDF`.
+La désinstallation (Paramètres › Applications, droits d'administrateur) retire
+le programme et ses entrées « Ouvrir avec ». Les réglages et l'image de
+signature de chaque utilisateur restent dans `%APPDATA%\DestriPDF`.
 
 ## Utilisation
 
@@ -93,14 +97,28 @@ Ctrl+Z annule, Ctrl+Y rétablit ; chaque bouton indique l'action concernée.
    « nom - signé.pdf », l'original reste intact), puis saisir le code PIN dans la
    fenêtre du logiciel de la clé.
 
+Le cadre visible reprend la présentation d'Acrobat : à gauche le nom du
+signataire en grand (ou l'image de la signature manuscrite), à droite
+« Signature numérique de … », le motif et le lieu s'ils sont renseignés, puis la
+date au format d'Acrobat (« Date : 2026.10.12 13:14:05 +02'00' »). Il n'est que
+la représentation de la signature : la preuve est la signature électronique
+elle-même, contrôlée par Acrobat et par DestriPDF à l'ouverture.
+
 La signature produite est une signature PAdES (ETSI.CAdES.detached, SHA-256)
-avec la chaîne de certification. Un document déjà signé peut être contresigné :
-les signatures précédentes restent valides.
+avec la chaîne de certification. Comme Acrobat, DestriPDF demande avant le code
+PIN l'état de révocation du certificat à l'autorité de certification (OCSP ou
+liste de révocation publiée dans le certificat), puis l'intègre au document : la
+signature reste vérifiable après l'expiration du certificat et Acrobat la dit
+« compatible LTV ». Un certificat révoqué est refusé avant toute saisie du PIN.
+Sans connexion, la signature est faite sans cet état et un message le signale.
+Réglage : menu ⋯ › Réglages › Validation à long terme. Un document déjà signé
+peut être contresigné : les signatures précédentes restent valides.
 
 À l'ouverture d'un document signé, un bandeau donne le résultat de la
 vérification : intégrité, couverture du document, modifications après signature
 et confiance de la chaîne de certification selon Windows. « Détails » ouvre le
-panneau « Signatures ».
+panneau « Signatures », qui indique aussi si l'état de révocation est intégré
+(LTV) et si l'heure est attestée par une autorité d'horodatage.
 
 « Apposer ma signature manuscrite » (menu ⋯) pose seulement l'image de la
 signature : elle n'a pas valeur de signature électronique.
@@ -108,7 +126,8 @@ signature : elle n'a pas valeur de signature électronique.
 ### Réglages
 
 Menu ⋯ › Réglages : auteur des annotations, thème (Windows, clair, sombre),
-adresse d'un service d'horodatage (TSA) facultatif, image de signature.
+validation à long terme des signatures (état de révocation intégré, actif par
+défaut), adresse d'un service d'horodatage (TSA) facultatif, image de signature.
 
 ## Dépannage
 
@@ -117,6 +136,11 @@ adresse d'un service d'horodatage (TSA) facultatif, image de signature.
   que le certificat apparaît dans `certmgr.msc` › Personnel › Certificats.
 - « Code PIN incorrect » ou « Code PIN bloqué » : messages de la clé elle-même ;
   le déblocage se fait avec le logiciel de l'autorité de certification.
+- « État de révocation du certificat non intégré » : l'autorité de certification
+  n'a pas répondu (connexion Internet, pare-feu). La signature est valide ;
+  signer à nouveau une fois connecté pour une signature « compatible LTV ».
+- « Votre certificat est révoqué » : l'autorité l'a déclaré invalide ; aucune
+  signature n'est produite. Contacter l'autorité de certification.
 - « Ce fichier est ouvert ou verrouillé par un autre logiciel » : fermer le
   fichier dans l'autre logiciel ou enregistrer sous un autre nom.
 - Journal : `%LOCALAPPDATA%\DestriPDF\logs\destripdf.log`.
@@ -157,8 +181,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1
   police de base) et réduction aux glyphes utiles (fontTools).
 - `destripdf/signing/wincert.py` : magasin de certificats Windows, chaîne de
   certification et signature par CryptoAPI/CNG (ctypes).
-- `destripdf/signing/pades.py` : signature PAdES (pyHanko), apparence visible,
-  vérification.
+- `destripdf/signing/pades.py` : signature PAdES (pyHanko), apparence visible
+  à la manière d'Acrobat, état de révocation intégré (LTV), vérification.
 - `destripdf/static/` : interface (modules JavaScript sans framework, charte
   DestriMix, polices locales).
 

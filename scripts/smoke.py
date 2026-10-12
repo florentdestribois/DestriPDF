@@ -2,6 +2,8 @@
 
 Usage : python scripts/smoke.py http://127.0.0.1:8791/recette/ <dossier de travail>
 Le dossier contient devis.pdf ; l'instance a été lancée avec DESTRIPDF_TEST_PFX.
+Si le dossier contient crl/ (echantillons.py --crl-port), une autorité simulée
+publie les listes de révocation : la signature doit intégrer leur état (LTV).
 """
 
 from __future__ import annotations
@@ -9,9 +11,36 @@ from __future__ import annotations
 import http.client
 import json
 import sys
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
+
+
+def serve_crls(crl_dir: Path) -> ThreadingHTTPServer:
+    """Autorité simulée : sert les listes de révocation du certificat de test."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            path = crl_dir / Path(self.path).name
+            if path.suffix != ".crl" or not path.is_file():
+                self.send_error(404)
+                return
+            data = path.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/pkix-crl")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *args):
+            pass
+
+    port = int((crl_dir / "port").read_text(encoding="ascii"))
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
 
 
 class Client:
@@ -44,6 +73,7 @@ def main(base: str, workdir: str) -> int:
     work = Path(workdir)
     c = Client(base)
     checks: list[tuple[str, bool, str]] = []
+    authority = serve_crls(work / "crl") if (work / "crl" / "port").exists() else None
 
     def check(name: str, ok: bool, detail: str = ""):
         checks.append((name, bool(ok), detail))
@@ -84,6 +114,9 @@ def main(base: str, workdir: str) -> int:
             "reason": "Test de fumée", "location": "Zellwiller", "path": str(signed),
         })
         check("signature PAdES visible", status == 200 and signed.exists(), str(data)[:300])
+        if authority is not None:
+            signature = data.get("signature", {}) if isinstance(data, dict) else {}
+            check("état de révocation intégré (LTV, autorité simulée)", signature.get("ltv") is True, str(signature)[:300])
         deadline = time.time() + 30
         reports = []
         while time.time() < deadline:
@@ -93,6 +126,11 @@ def main(base: str, workdir: str) -> int:
                 break
             time.sleep(0.3)
         check("vérification de la signature", bool(reports) and reports[0]["intact"] and reports[0]["valid"], str(reports)[:300])
+        if authority is not None:
+            check("signature vérifiable hors ligne (LTV)", bool(reports) and reports[0].get("ltv") is True, str(reports)[:300])
+    if authority is not None:
+        authority.shutdown()
+        authority.server_close()
     failed = [name for name, ok, _ in checks if not ok]
     print(f"\n{len(checks) - len(failed)} / {len(checks)} contrôles réussis")
     return 1 if failed else 0

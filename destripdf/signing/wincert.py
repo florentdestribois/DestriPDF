@@ -613,6 +613,16 @@ def chain_for_certificates(ders: list[bytes], *, allow_network: bool = False) ->
         return store.chain(thumb, allow_network=allow_network)
 
 
+def trusted_root_ders() -> list[bytes]:
+    """Autorités racines approuvées par Windows (magasin « ROOT » de l'utilisateur,
+    qui inclut celles de l'ordinateur) : certificats publics, aucune clé."""
+    try:
+        with CertStore.system("ROOT") as store:
+            return [_context_der(ctx) for ctx in store._contexts()]
+    except WinCertError:
+        return []
+
+
 def _sign_with_context(ctx: PCCERT_CONTEXT, digest: bytes, hash_name: str, key_algorithm: str, hwnd: int | None) -> bytes:
     handle = ctypes.c_size_t(0)
     key_spec = wintypes.DWORD(0)
