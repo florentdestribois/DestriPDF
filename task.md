@@ -228,13 +228,27 @@ chaque release ». La 1.1.1 (cadre Acrobat) a été construite mais pas install�
 - [x] `build.ps1` 1.2.0 : 79 tests, test de fumée de l'exécutable figé 16/16
   (LTV avec autorité simulée), installateur `DestriPDF-1.2.0-installation.exe`
   (34,5 Mo) ; recette Edge sur l'exécutable figé : 28 parcours sur 28.
-- [ ] Installation de la 1.2.0 dans Program Files : autorisation Windows à
-  donner par Florent (la tentative 1.1.1 a été annulée ; poste encore en 1.1.0).
-- [ ] Commit et première release `v1.2.0` par `scripts\release.ps1 -Publish` :
-  sur demande explicite de Florent.
+- [x] Release `v1.2.0` publiée à la demande de Florent :
+  https://github.com/florentdestribois/DestriPDF/releases/tag/v1.2.0 (étiquette
+  sur `eaf2bf8`), installateur reconstruit et testé par `release.ps1` (79 tests,
+  fumée 16/16) puis joint ; SHA-256 `571556155E632694C07B00A113AF1C0F75DB7004
+  2269852558940E4C943586DE`, identique sur GitHub. Premier passage : `gh` n'a pas
+  trouvé git (hors PATH), release créée à la main avec le même installateur ;
+  script corrigé (git dans le PATH de `gh`, `--repo` tiré d'`origin`).
+- [x] Installé dans `C:\Program Files\DestriPDF` (1.1.0 → 1.2.0, autorisation
+  Windows acceptée) : 717 fichiers identiques au paquet de la release, entrée
+  « DestriPDF 1.2.0 », « Ouvrir avec » en place, lancement sans droits correct.
 
 ### Reste à faire / limites
 
+- [ ] DestriPDF lancé par DestriCenter (fiche technique ouverte par
+  `os.startfile`, 12 octobre 14 h 20) resté sans fenêtre plus d'une heure :
+  WebView2 chargé mais en attente (LpcReply), aucun processus WebView2 créé,
+  aucun journal. Écartés : variables `_PYI_*` héritées, `PATH` avec le `_MEI` de
+  DestriCenter (même WebView2Loader), élévation, mise à jour de WebView2, fichier
+  (le même PDF s'ouvre depuis l'Explorateur). Processus arrêté pour installer la
+  1.2.0. À faire : journal de démarrage et durée de création de WebView2, sortie
+  propre avec message si la fenêtre n'apparaît pas.
 - [ ] Signature réelle avec la clé CertEurope puis contrôle dans Acrobat :
   « Signature valide » et « compatible LTV » attendus (seul essai impossible sans
   la clé et son PIN).

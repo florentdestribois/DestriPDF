@@ -23,6 +23,11 @@ $git = Find-Tool 'git' @(
     "$env:USERPROFILE\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\git\cmd\git.exe"
 )
 $gh = Find-Tool 'gh' @("$env:ProgramFiles\GitHub CLI\gh.exe")
+# gh appelle git pour situer le dépôt : git doit être dans le PATH de ce processus.
+$env:PATH = (Split-Path $git) + ';' + $env:PATH
+$remote = (& $git remote get-url origin).Trim()
+if ($remote -notmatch 'github\.com[:/](?<repo>[^/]+/[^/]+?)(\.git)?$') { throw "Dépôt GitHub introuvable dans origin : $remote" }
+$repo = $Matches['repo']
 
 # 1. Une seule version : code, installateur, informations de l'exécutable.
 $version = (Select-String -Path 'destripdf\__init__.py' -Pattern '__version__ = "([\d.]+)"').Matches[0].Groups[1].Value
@@ -68,7 +73,7 @@ $body = (& $git log -1 --format=%B) -join "`n"
 $text = "Installateur Windows : DestriPDF-$version-installation.exe (installation dans C:\Program Files\DestriPDF, autorisation Windows demandée)`n`nSHA-256 : $hash`n`n$body"
 [System.IO.File]::WriteAllText($notes, $text, (New-Object System.Text.UTF8Encoding $false))
 try {
-    & $gh release create $tag $installer --title "DestriPDF $version" --notes-file $notes --verify-tag
+    & $gh release create $tag $installer --repo $repo --title "DestriPDF $version" --notes-file $notes --verify-tag
     if ($LASTEXITCODE -ne 0) { throw "Release $tag non créée : l'étiquette est poussée, relancer « gh release create »." }
 } finally {
     Remove-Item -LiteralPath $notes -ErrorAction SilentlyContinue
