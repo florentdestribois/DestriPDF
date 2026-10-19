@@ -5,7 +5,7 @@
 ; Prérequis : dist\DestriPDF construit par PyInstaller (DestriPDF.spec).
 
 #define AppName "DestriPDF"
-#define AppVersion "1.2.1"
+#define AppVersion "1.3.0"
 #define AppPublisher "Menuiserie Destribois"
 #define AppExe "DestriPDF.exe"
 #define ProgId "DestriPDF.Document"

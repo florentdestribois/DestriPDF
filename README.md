@@ -15,7 +15,7 @@ signature (certificat eIDAS, marchés publics).
 
 ## Installation
 
-1. Lancer `installer_output\DestriPDF-1.2.1-installation.exe` (ou l'installateur
+1. Lancer `installer_output\DestriPDF-1.3.0-installation.exe` (ou l'installateur
    joint à la release GitHub de la version) et accepter la
    demande d'autorisation de Windows. DestriPDF s'installe pour tous les
    utilisateurs du poste dans `C:\Program Files\DestriPDF` (« Programmes » dans
@@ -81,6 +81,16 @@ Les annotations sont standard : Acrobat, Edge et les autres lecteurs les
 affichent. Le panneau « Commentaires » (menu ⋯) les liste toutes.
 
 Les champs d'un formulaire PDF se remplissent directement en mode Sélection.
+
+### Imprimer en livret
+
+Menu ⋯ › Imprimer (Ctrl+P) › Mise en page « Livret » : deux pages côte à côte
+sur chaque face d'une feuille A4 paysage (pages A4 réduites en A5) ou A3
+paysage, dans l'ordre qui donne un cahier une fois la pile pliée au milieu ;
+pages blanches ajoutées à la fin jusqu'à un multiple de 4. Reliure à gauche ou
+à droite. Dans la fenêtre d'impression, choisir recto verso, retourner sur le
+bord court ; sans recto verso automatique, imprimer les rectos, remettre la
+pile dans le bac, puis les versos.
 
 ### Exporter en JPG
 

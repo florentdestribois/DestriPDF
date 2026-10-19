@@ -10,6 +10,7 @@ import { Viewer } from './viewer.js';
 import { LineEditor } from './textedit.js';
 import { ToolManager, TOOLS } from './tools.js';
 import { Panel, Sidebar } from './panels.js';
+import { bookletSheetCount, bookletSides } from './booklet.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -598,7 +599,45 @@ class App {
 
   // --- Impression ---
 
-  async print() {
+  async openPrint() {
+    if (!this.doc) return;
+    if (this.editor.isOpen) await this.editor.commit();
+    const count = this.doc.page_count;
+    const layout = el('select', { class: 'text-input', 'aria-label': 'Mise en page' },
+      el('option', { value: 'normal', text: 'Pages normales — une page par face' }),
+      el('option', { value: 'booklet', text: 'Livret — deux pages par face, pliées au milieu' }));
+    const paper = el('select', { class: 'text-input', 'aria-label': 'Feuille' },
+      el('option', { value: 'a4', text: 'A4 paysage (pages A4 réduites en A5)' }),
+      el('option', { value: 'a3', text: 'A3 paysage (pages A4 en taille réelle)' }));
+    const binding = el('select', { class: 'text-input', 'aria-label': 'Reliure' },
+      el('option', { value: 'left', text: 'À gauche' }),
+      el('option', { value: 'right', text: 'À droite' }));
+    const sides = el('select', { class: 'text-input', 'aria-label': 'Faces à imprimer' },
+      el('option', { value: 'both', text: 'Recto verso' }),
+      el('option', { value: 'front', text: 'Rectos seulement' }),
+      el('option', { value: 'back', text: 'Versos seulement' }));
+    const sheets = bookletSheetCount(count);
+    const blanks = sheets * 4 - count;
+    const summary = el('p', { class: 'help', text: `${sheets} feuille${sheets > 1 ? 's' : ''} pour ${count} page${count > 1 ? 's' : ''}${blanks ? `, ${blanks} page${blanks > 1 ? 's' : ''} blanche${blanks > 1 ? 's' : ''} à la fin` : ''}.` });
+    const options = el('div', { class: 'print-booklet-options', hidden: true },
+      el('label', { class: 'field-label spaced', text: 'Feuille' }), paper,
+      el('label', { class: 'field-label spaced', text: 'Reliure' }), binding,
+      el('label', { class: 'field-label spaced', text: 'Faces' }), sides,
+      summary,
+      el('p', { class: 'help', text: 'Dans la fenêtre d\'impression : recto verso, retourner sur le bord court. Sans recto verso automatique, imprimez les rectos, remettez la pile dans le bac, puis les versos.' }));
+    layout.addEventListener('change', () => { options.hidden = layout.value !== 'booklet'; });
+    const body = el('div', {}, el('label', { class: 'field-label', text: 'Mise en page' }), layout, options);
+    const choice = await modal({
+      title: 'Imprimer',
+      body,
+      buttons: [{ label: 'Annuler', value: null }, { label: 'Imprimer', value: 'ok', kind: 'btn-primary', default: true }],
+    });
+    if (choice !== 'ok') return;
+    if (layout.value === 'booklet') await this.print({ booklet: { paper: paper.value, binding: binding.value, sides: sides.value } });
+    else await this.print();
+  }
+
+  async print({ booklet = null } = {}) {
     if (!this.doc) return;
     const root = $('print-root');
     root.textContent = '';
@@ -607,14 +646,35 @@ class App {
     const count = this.doc.page_count;
     const dpi = count <= 30 ? 150 : count <= 120 ? 110 : 80;
     const scale = dpi / 72;
+    const url = (index) => `api/page/${index}/image?d=${this.doc.id}&s=${scale}&v=${this.doc.pages[index].v}`;
     try {
-      const images = this.doc.pages.map((info, index) => {
-        const img = el('img', { class: 'print-page', alt: '' });
-        img.style.width = `${info.w}pt`;
-        img.style.height = `${info.h}pt`;
-        root.append(img);
-        return { img, url: `api/page/${index}/image?d=${this.doc.id}&s=${scale}&v=${info.v}` };
-      });
+      let images;
+      if (booklet) {
+        // Une face de feuille paysage par bloc, deux demi-feuilles où chaque page
+        // est réduite sans déformation et centrée.
+        images = [];
+        for (const face of bookletSides(count, booklet)) {
+          const sheet = el('div', { class: `print-sheet print-sheet-${booklet.paper}` });
+          for (const index of [face.left, face.right]) {
+            const slot = el('div', { class: 'print-slot' });
+            if (index !== null) {
+              const img = el('img', { class: 'print-slot-page', alt: '' });
+              slot.append(img);
+              images.push({ img, url: url(index) });
+            }
+            sheet.append(slot);
+          }
+          root.append(sheet);
+        }
+      } else {
+        images = this.doc.pages.map((info, index) => {
+          const img = el('img', { class: 'print-page', alt: '' });
+          img.style.width = `${info.w}pt`;
+          img.style.height = `${info.h}pt`;
+          root.append(img);
+          return { img, url: url(index) };
+        });
+      }
       let done = 0;
       const queue = [...images];
       const worker = async () => {
@@ -630,8 +690,8 @@ class App {
     } finally {
       indicator.close();
     }
+    window.addEventListener('afterprint', () => { root.textContent = ''; }, { once: true });
     window.print();
-    setTimeout(() => { root.textContent = ''; }, 1000);
   }
 
   // --- Signature ---
@@ -806,7 +866,7 @@ class App {
     showMenu(anchor, [
       { label: 'Enregistrer sous…', icon: 'saveAs', shortcut: 'Ctrl+Maj+S', disabled: !doc, action: () => this.saveAs() },
       ...(this.state?.app?.dialogs ? [] : [{ label: 'Télécharger', icon: 'download', disabled: !doc, action: () => this.download() }]),
-      { label: 'Imprimer…', icon: 'print', shortcut: 'Ctrl+P', disabled: !doc, action: () => this.print() },
+      { label: 'Imprimer…', icon: 'print', shortcut: 'Ctrl+P', disabled: !doc, action: () => this.openPrint() },
       { label: 'Exporter en JPG…', icon: 'image', disabled: !doc, action: () => this.exportJpeg() },
       { label: 'Fermer le document', icon: 'close', disabled: !doc, action: () => this.closeDocument() },
       '-',
@@ -921,7 +981,7 @@ class App {
       if (ctrl && key === 'o') { e.preventDefault(); this.openDialog(); return; }
       if (ctrl && key === 's') { e.preventDefault(); if (e.shiftKey) this.saveAs(); else this.save(); return; }
       if (!this.doc) return;
-      if (ctrl && key === 'p') { e.preventDefault(); this.print(); return; }
+      if (ctrl && key === 'p') { e.preventDefault(); this.openPrint(); return; }
       if (ctrl && key === 'f') { e.preventDefault(); $('search-input').focus(); $('search-input').select(); return; }
       if (ctrl && (key === '+' || key === '=')) { e.preventDefault(); this.viewer.zoomStep(1); return; }
       if (ctrl && (key === '-' || key === '_')) { e.preventDefault(); this.viewer.zoomStep(-1); return; }

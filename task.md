@@ -290,8 +290,40 @@ s'ouvre depuis l'Explorateur).
   fenêtre en 0,45 s, interface en 0,9 s, surveillance non déclenchée après
   25 s, fermeture propre.
 
+## Version 1.3.0 — impression en livret, 19 octobre 2026
+
+Demande de Florent : « Adobe Acrobat permet une impression en livret simple des
+pages, permets cela avec DestriPDF ».
+
+### Réalisé
+
+- [x] Boîte « Imprimer » (menu ⋯ et Ctrl+P) : pages normales ou livret ; feuille
+  A4 paysage (pages réduites en A5) ou A3 paysage (A4 en taille réelle),
+  reliure à gauche ou à droite, recto verso, rectos seuls ou versos seuls ;
+  nombre de feuilles et de pages blanches affiché ; consigne « retourner sur le
+  bord court ».
+- [x] `static/js/booklet.js` : ordre de piqûre à cheval, blancs en fin de
+  document. Feuilles en pages CSS nommées (`@page booklet-a4/a3`), chaque page
+  réduite sans déformation et centrée dans sa moitié.
+- [x] Zone d'impression vidée à `afterprint` (et non plus après 1 s).
+
+### Validations
+
+- [x] Tests : 85 passés.
+- [x] Recette Edge : 30 parcours sur 30 (18 + 12) ; nouveaux : ordre
+  d'imposition pour 1, 2, 4, 5 et 8 pages, reliure à droite, rectos et versos
+  seuls ; boîte Imprimer par Ctrl+P ; sortie réelle `Page.printToPDF` : 2 faces
+  A4 paysage (842 × 595 pt) pour 2 pages, page 1 à droite du recto, page 2 à
+  gauche du verso (captures relues).
+- [ ] Essai sur l'imprimante du poste (recto verso bord court, pliage) : à faire
+  par Florent.
+- [x] Version 1.3.0 (code, installateur, informations de l'exécutable,
+  README) ; publication demandée par Florent : `scripts\release.ps1 -Publish`.
+
 ### Reste à faire / limites
 
+- [ ] Livret : pas de découpage en cahiers (« signatures » d'Acrobat) ni de
+  plage de feuilles ; pages paysage non tournées automatiquement.
 - [ ] Cause du blocage au lancement par DestriCenter toujours inconnue : au
   prochain cas, lire `logs\blocage-….txt` (piles) et le journal de démarrage.
 - [ ] Signature réelle avec la clé CertEurope puis contrôle dans Acrobat :

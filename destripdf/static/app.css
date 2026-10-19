@@ -567,7 +567,15 @@ body.no-doc .needs-doc-area, body.no-doc .sidebar { display: none !important; }
   .print-root { display: block; }
   .print-page { display: block; break-after: page; page-break-after: always; margin: 0; }
   .print-page:last-child { break-after: auto; page-break-after: auto; }
+  /* Livret : feuille paysage nommée, deux demi-feuilles centrées */
+  .print-sheet { page: booklet-a4; display: flex; width: 297mm; height: 209.5mm; overflow: hidden; break-after: page; page-break-after: always; }
+  .print-sheet-a3 { page: booklet-a3; width: 420mm; height: 296.5mm; }
+  .print-sheet:last-child { break-after: auto; page-break-after: auto; }
+  .print-slot { flex: 1 1 0; min-width: 0; height: 100%; display: flex; align-items: center; justify-content: center; }
+  .print-slot-page { display: block; width: 100%; height: 100%; object-fit: contain; }
 }
+@page booklet-a4 { size: A4 landscape; margin: 0; }
+@page booklet-a3 { size: A3 landscape; margin: 0; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }

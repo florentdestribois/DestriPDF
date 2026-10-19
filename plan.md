@@ -30,6 +30,10 @@ Inclus :
 - signature manuscrite simple (image), signalée comme sans valeur électronique ;
 - pages : pivoter, supprimer, déplacer, insérer depuis un autre PDF ;
 - annuler/rétablir, enregistrer, enregistrer sous, imprimer ;
+- imprimer en livret comme Acrobat (demande de Florent du 19 octobre) : deux
+  pages par face de feuille A4 ou A3 paysage, ordre de piqûre à cheval, pages
+  blanches ajoutées jusqu'à un multiple de 4, reliure à gauche ou à droite,
+  recto verso ou rectos/versos seuls (recto verso manuel) ;
 - exporter en JPG la page affichée ou toutes les pages (150 ou 300 ppp), telles
   qu'affichées (annotations, champs, signatures visibles) ;
 - installateur Windows pour tous les utilisateurs du poste (Program Files,
@@ -122,6 +126,9 @@ recomposition, horodatage par défaut (réglage facultatif), PAdES-LTA
   état archivé dans la signature) est reconnue « LTV » comme dans Acrobat.
 - Export JPG : une image par page à 150 ou 300 ppp, résolution inscrite dans le
   fichier, très grande page réduite et signalée (tests, recette).
+- Livret : pour 8 pages, faces (8|1), (2|7), (6|3), (4|5) ; reliure à droite
+  inversée ; la sortie réelle du moteur d'impression compte une feuille A4
+  paysage par face (recette).
 - Aucune release GitHub sans son installateur vérifié (`scripts\release.ps1`).
 - Jamais d'instance sans fenêtre : fenêtre absente après 20 s → relance unique,
   puis message et fin (tests, recette `surveillance_demarrage.py` sur

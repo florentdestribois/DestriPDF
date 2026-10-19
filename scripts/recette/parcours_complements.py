@@ -3,6 +3,7 @@
 Usage : python scripts/recette/parcours_complements.py <captures> <dossier d'échantillons>
 L'instance doit tourner en mode recette sur http://127.0.0.1:8790/recette/.
 """
+import base64
 import json
 import sys
 import time
@@ -185,6 +186,51 @@ try:
         edge.call("Emulation.setEmulatedMedia", media="print")
         edge.shot(OUT / "r3-07-impression.png")
         edge.call("Emulation.setEmulatedMedia", media="")
+
+    @step("Imposition en livret : ordre des pages et pages blanches")
+    def _():
+        sides = edge.js("""import('./static/js/booklet.js').then(m => [1, 2, 4, 5, 8].map(n => m.bookletSides(n).map(f => [f.left, f.right]))
+            .concat([m.bookletSides(8, {binding: 'right'}).map(f => [f.left, f.right]),
+                     m.bookletSides(8, {sides: 'front'}).map(f => [f.left, f.right]),
+                     m.bookletSides(8, {sides: 'back'}).map(f => [f.left, f.right])]))""")
+        expected = [
+            [[None, 0], [None, None]],
+            [[None, 0], [1, None]],
+            [[3, 0], [1, 2]],
+            [[None, 0], [1, None], [None, 2], [3, 4]],
+            [[7, 0], [1, 6], [5, 2], [3, 4]],
+            [[0, 7], [6, 1], [2, 5], [4, 3]],
+            [[7, 0], [5, 2]],
+            [[1, 6], [3, 4]],
+        ]
+        assert sides == expected, sides
+
+    @step("Imprimer en livret : boîte Imprimer, feuilles A4 paysage")
+    def _():
+        edge.js("window.__printed = 0")
+        edge.key("p", modifiers=CTRL)
+        edge.wait_for("document.querySelector('.modal-title') && document.querySelector('.modal-title').textContent === 'Imprimer'")
+        assert edge.js("document.querySelector('.print-booklet-options').hidden")
+        edge.js("(() => { const s = document.querySelector('.modal select'); s.value = 'booklet'; s.dispatchEvent(new Event('change')); })()")
+        assert not edge.js("document.querySelector('.print-booklet-options').hidden")
+        edge.shot(OUT / "r3-07c-livret-boite.png")
+        edge.js("[...document.querySelectorAll('.modal .btn-primary')][0].click()")
+        edge.wait_for("window.__printed === 1", timeout=20)
+        pages = edge.js("window.__app.doc.page_count")
+        sheets = edge.js("document.querySelectorAll('#print-root .print-sheet').length")
+        assert sheets == 2 * ((pages + 3) // 4), (pages, sheets)
+        assert edge.js("document.querySelectorAll('#print-root .print-slot img').length") == pages
+        assert edge.js("[...document.querySelectorAll('#print-root img')].every(i => i.complete && i.naturalWidth > 1000)")
+        edge.call("Emulation.setEmulatedMedia", media="print")
+        box = edge.js("(() => { const r = document.querySelector('.print-sheet').getBoundingClientRect(); return [r.width, r.height]; })()")
+        assert abs(box[0] - 297 / 25.4 * 96) < 2 and box[0] > box[1], box
+        edge.shot(OUT / "r3-07d-livret.png")
+        edge.call("Emulation.setEmulatedMedia", media="")
+        # Sortie réelle du moteur d'impression : une feuille A4 paysage par face.
+        printed = fitz.open("pdf", base64.b64decode(edge.call("Page.printToPDF", preferCSSPageSize=True)["data"]))
+        assert printed.page_count == sheets, (printed.page_count, sheets)
+        assert all(abs(p.rect.width - 842) < 2 and abs(p.rect.height - 595) < 2 for p in printed), [p.rect for p in printed]
+        printed.save(OUT / "r3-07e-livret.pdf")
 
     @step("Exporter en JPG : menu ⋯, toutes les pages en 150 ppp")
     def _():
