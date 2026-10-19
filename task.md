@@ -319,6 +319,17 @@ pages, permets cela avec DestriPDF ».
   par Florent.
 - [x] Version 1.3.0 (code, installateur, informations de l'exécutable,
   README) ; publication demandée par Florent : `scripts\release.ps1 -Publish`.
+- [x] Release `v1.3.0` publiée sans intervention :
+  https://github.com/florentdestribois/DestriPDF/releases/tag/v1.3.0, étiquette
+  sur `85f0e8e` ; `build.ps1` : tests, fumée de l'exécutable figé 16/16,
+  installateur `DestriPDF-1.3.0-installation.exe` (34,5 Mo) ; SHA-256
+  `E7A3D28D31301BFC4B8C78AF075E1E78C84E6461D7EBA721EBCAF461743952CC`
+  identique sur GitHub.
+- [x] Installée sur le poste à la demande de Florent (1.2.1 → 1.3.0,
+  autorisation Windows acceptée) : installateur identique à celui de la
+  release, 718 fichiers identiques au paquet (`booklet.js` compris), entrée
+  « DestriPDF 1.3.0 » ; lancement sans droits : fenêtre en 0,9 s, fermeture
+  propre.
 
 ### Reste à faire / limites
 
