@@ -30,10 +30,16 @@ Inclus :
 - signature manuscrite simple (image), signalée comme sans valeur électronique ;
 - pages : pivoter, supprimer, déplacer, insérer depuis un autre PDF ;
 - annuler/rétablir, enregistrer, enregistrer sous, imprimer ;
-- imprimer en livret comme Acrobat (demande de Florent du 19 octobre) : deux
-  pages par face de feuille A4 ou A3 paysage, ordre de piqûre à cheval, pages
-  blanches ajoutées jusqu'à un multiple de 4, reliure à gauche ou à droite,
-  recto verso ou rectos/versos seuls (recto verso manuel) ;
+- imprimer par le pilote de l'imprimante, comme Acrobat : boîte Imprimer de
+  DestriPDF (imprimante, pages, copies), « Préférences de l'imprimante »
+  (fenêtre du pilote) ;
+- imprimer en livret (demandes de Florent du 19 octobre, la dernière : « revoit
+  complètement cette fonction afin de garantir que ça marche ») : feuilles
+  composées par DestriPDF (deux pages par face, ordre du pliage), aperçu, A4 ou
+  A3, envoyées comme un document Word recto verso (portrait, bord long, faces
+  tournées par DestriPDF) ; jamais la fonction Livret de l'imprimante (papier
+  « A4R » réclamé par la Canon), jamais le bord court en paysage (recto verso
+  non appliqué par la Canon) ;
 - exporter en JPG la page affichée ou toutes les pages (150 ou 300 ppp), telles
   qu'affichées (annotations, champs, signatures visibles) ;
 - installateur Windows pour tous les utilisateurs du poste (Program Files,
@@ -88,6 +94,24 @@ recomposition, horodatage par défaut (réglage facultatif), PAdES-LTA
   `graphite` en sombre), polices locales, aucune ressource externe. Barre
   d'outils à libellés courts, pastille de navigation et de zoom en bas du
   document, barre d'options propre à l'outil actif.
+- Impression (`printing.py`) : boîte Imprimer de l'interface ; préférences du
+  pilote par `DocumentProperties` ; pages rendues par MuPDF et envoyées par GDI
+  (`StretchDIBits`). La boîte d'impression de Windows n'est pas utilisée : sur
+  Windows 11, `PrintDlgEx` ouvre une boîte moderne sans accès sûr au pilote.
+- Livret (`booklet.py`) : faces composées en PDF (`show_pdf_page` d'une copie où
+  annotations et champs sont intégrés par `bake`, rotation de la page
+  compensée), une page PDF par face. Réglages d'un document Word recto verso :
+  format ordinaire décrit en portrait (jamais un papier « tourné » A4R),
+  `psk:Portrait`, `psk:TwoSidedLongEdge` (bord court seulement si le pilote
+  n'a que lui), `psk:JobBindAllDocuments` et agrafage à `psk:None`, une page par
+  feuille ; seuls ceux qui diffèrent sont changés par le schéma d'impression de
+  Windows (System.Printing de .NET, déjà chargé par pywebview), puis tous relus.
+  Chaque face est posée sur tout le papier (taille réelle, pli au milieu
+  exact), tournée d'un quart de tour vers la gauche ; versos d'un demi-tour de
+  plus en bord long (`backs_half_turn`), marge de composition au moins égale à
+  la marge non imprimable du pilote.
+- Recette et fumée : impression dans un fichier (`DESTRIPDF_TEST_PRINT_DIR`),
+  jamais sur une imprimante.
 - Recette : Edge sans fenêtre piloté par le protocole DevTools
   (`scripts\cdp.py`, `scripts\recette.ps1`), certificat de test en mémoire.
 - Paquet : PyInstaller en mode dossier (démarrage rapide) et Inno Setup.
@@ -126,9 +150,18 @@ recomposition, horodatage par défaut (réglage facultatif), PAdES-LTA
   état archivé dans la signature) est reconnue « LTV » comme dans Acrobat.
 - Export JPG : une image par page à 150 ou 300 ppp, résolution inscrite dans le
   fichier, très grande page réduite et signalée (tests, recette).
-- Livret : pour 8 pages, faces (8|1), (2|7), (6|3), (4|5) ; reliure à droite
-  inversée ; la sortie réelle du moteur d'impression compte une feuille A4
-  paysage par face (recette).
+- Impression : pages envoyées au pilote Windows (essai réel avec « Microsoft
+  Print to PDF ») ; copies assemblées par le pilote ; page paysage tournée vers
+  la gauche, page pivotée imprimée droite (tests, recette, fumée).
+- Livret : pour 8 pages, faces (8|1), (2|7), (6|3), (4|5) ; chaque page une
+  seule fois ; reliure à droite inversée ; imprimé réellement par un pilote
+  Windows, chaque page reconnue à sa place et droite ; versos retournés sur
+  demande ; réglages du livret acceptés et relus sur chaque pilote du poste,
+  Canon comprise, sans jamais `psk:Booklet` ni papier tourné ; sur la Canon,
+  ticket du livret identique à celui d'une impression normale ; feuille
+  simulée (recto, verso selon la définition du retournement, lecture autour du
+  pli) lue juste pour 4 et 8 pages, et fausse si le demi-tour des versos manque
+  (tests, recette, fumée de l'exécutable figé).
 - Aucune release GitHub sans son installateur vérifié (`scripts\release.ps1`).
 - Jamais d'instance sans fenêtre : fenêtre absente après 20 s → relance unique,
   puis message et fin (tests, recette `surveillance_demarrage.py` sur

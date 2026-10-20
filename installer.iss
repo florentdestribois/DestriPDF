@@ -5,7 +5,7 @@
 ; Prérequis : dist\DestriPDF construit par PyInstaller (DestriPDF.spec).
 
 #define AppName "DestriPDF"
-#define AppVersion "1.3.0"
+#define AppVersion "1.3.3"
 #define AppPublisher "Menuiserie Destribois"
 #define AppExe "DestriPDF.exe"
 #define ProgId "DestriPDF.Document"
@@ -42,6 +42,10 @@ Name: "fr"; MessagesFile: "compiler:Languages\French.isl"
 [Tasks]
 Name: "pdfopenwith"; Description: "Proposer DestriPDF pour ouvrir les fichiers PDF (menu « Ouvrir avec » et applications par défaut de Windows)"; GroupDescription: "Fichiers PDF :"
 Name: "desktopicon"; Description: "Créer un raccourci sur le Bureau"; GroupDescription: "Raccourcis :"
+
+[InstallDelete]
+; Fichiers d'une version précédente retirés du paquet (mise en page livret de la 1.3.0).
+Type: files; Name: "{app}\_internal\destripdf\static\js\booklet.js"
 
 [Files]
 Source: "dist\DestriPDF\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

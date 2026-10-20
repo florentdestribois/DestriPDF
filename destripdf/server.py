@@ -48,6 +48,8 @@ class Dialogs(Protocol):
 
     def save_jpeg(self, directory: str, filename: str) -> str | None: ...
 
+    def owner_handle(self) -> int: ...
+
 
 class ApiError(Exception):
     def __init__(self, message: str, code: str = "error", status: int = 400, extra: dict | None = None):
@@ -103,6 +105,10 @@ class AppState:
         self.settings = settings
         self.dialogs = dialogs
         self.mode = mode
+        # Impression par le pilote (remplacé par un double dans les tests) ; en
+        # recette, chaque impression part dans un fichier de ce dossier.
+        self.printing = None
+        self.print_output_dir: str | None = None
         self._store_factory = store_factory
         self.session = None
         self.lock = threading.RLock()
@@ -638,6 +644,154 @@ class Handler(BaseHTTPRequestHandler):
         body = self._json_body()
         self._done(self.app.require_session().move_page(int(body["from"]), int(body["to"])))
 
+    def _printing(self):
+        if self.app.printing is None:
+            from .printing import WindowsPrinting
+
+            self.app.printing = WindowsPrinting()
+        return self.app.printing
+
+    def _printer_name(self, body) -> str:
+        name = str(body.get("printer") or "")
+        if not name or name not in self._printing().printers()[0]:
+            raise ApiError("Choisissez une imprimante du poste.", "bad_printer")
+        return name
+
+    def api_printers(self, query):
+        from .printing import PrintError
+
+        try:
+            names, default = self._printing().printers()
+        except (PrintError, OSError) as exc:
+            raise ApiError(f"Imprimantes illisibles : {exc}", "printers_failed") from exc
+        last = self.app.settings.get("last_printer")
+        self._json({"printers": names, "default": default, "selected": last if last in names else default})
+
+    def api_printer_capabilities(self, query):
+        """Ce que le pilote permet pour le livret : formats ordinaires, recto verso bord court."""
+        from .printing import PrintError
+
+        name = self._printer_name({"printer": (query.get("printer") or [""])[0]})
+        try:
+            caps = self._printing().capabilities(name)
+        except PrintError as exc:
+            raise ApiError(str(exc), "print_failed") from exc
+        flipped = name in (self.app.settings.get("booklet_flipped") or [])
+        self._json({"printer": name, **caps, "flip_backs": flipped})
+
+    def _print_pages(self, body, count: int) -> list[int]:
+        from .printing import PrintError, parse_pages
+
+        scope = body.get("pages") or "all"
+        if scope == "all":
+            return list(range(count))
+        if scope == "current":
+            try:
+                current = int(body.get("current", 0))
+            except (TypeError, ValueError):
+                current = -1
+            if not 0 <= current < count:
+                raise ApiError("Page inexistante.", "bad_page")
+            return [current]
+        try:
+            return parse_pages(str(scope), count)
+        except PrintError as exc:
+            raise ApiError(str(exc), "bad_page") from exc
+
+    def api_booklet_plan(self, query):
+        """Faces du livret pour les pages choisies : (gauche, droite), numéros de page."""
+        from .booklet import booklet_sides
+
+        session = self.app.require_session()
+        binding = (query.get("binding") or ["left"])[0]
+        if binding not in ("left", "right"):
+            raise ApiError("Reliure inconnue.", "bad_binding")
+        pages = self._print_pages({"pages": (query.get("pages") or ["all"])[0],
+                                   "current": (query.get("current") or ["0"])[0]}, session.page_count)
+        faces = [[None if k is None else pages[k] + 1 for k in face] for face in booklet_sides(len(pages), binding)]
+        self._json({"faces": faces, "sheets": len(faces) // 2, "pages": len(pages)})
+
+    def api_print_preferences(self, query):
+        """Fenêtre de préférences du pilote (recto verso, bac…), gardées pour l'impression."""
+        from .printing import PrintError
+
+        body = self._json_body()
+        name = self._printer_name(body)
+        dialogs = self.app.dialogs
+        if dialogs is None:
+            raise ApiError("Dialogue indisponible.", "no_dialog", HTTPStatus.CONFLICT)
+        try:
+            changed = self._printing().preferences(dialogs.owner_handle(), name)
+        except PrintError as exc:
+            raise ApiError(str(exc), "print_failed") from exc
+        self._json({"changed": changed})
+
+    def api_print(self, query):
+        """Envoi au pilote de l'imprimante choisie : pages normales ou livret mis en
+        page par DestriPDF (jamais la fonction Livret de l'imprimante)."""
+        from .booklet import MIN_MARGIN, SHEETS
+        from .document import FITZ_LOCK, render_bgra
+        from .printing import MAX_COPIES, PrintError
+
+        body = self._json_body()
+        session = self.app.require_session()
+        output = None
+        if self.app.dialogs is None:
+            # Mode navigateur : seule la recette imprime, dans un fichier.
+            if not self.app.print_output_dir:
+                raise ApiError("Impression disponible dans la fenêtre DestriPDF.", "no_dialog", HTTPStatus.CONFLICT)
+            output = str(Path(self.app.print_output_dir) / f"impression-{int(time.time() * 1000)}.pdf")
+        name = self._printer_name(body)
+        try:
+            copies = int(body.get("copies", 1))
+        except (TypeError, ValueError):
+            copies = 0
+        if not 1 <= copies <= MAX_COPIES:
+            raise ApiError(f"Nombre de copies entre 1 et {MAX_COPIES}.", "bad_copies")
+        pages = self._print_pages(body, session.page_count)
+        layout = body.get("layout") or "normal"
+        if layout not in ("normal", "booklet"):
+            raise ApiError("Mise en page inconnue.", "bad_layout")
+        result = {"pages": len(pages), "copies": copies, "layout": layout}
+        if layout == "booklet":
+            sheet = body.get("sheet") or "a4"
+            binding = body.get("binding") or "left"
+            if sheet not in SHEETS:
+                raise ApiError("Format de feuille inconnu.", "bad_sheet")
+            if binding not in ("left", "right"):
+                raise ApiError("Reliure inconnue.", "bad_binding")
+            flip = bool(body.get("flip_backs"))
+            made = {}
+
+            def impose(margin: float):
+                made["faces"] = session.impose_booklet(pages, SHEETS[sheet], max(MIN_MARGIN, margin), binding)
+                return made["faces"]
+
+            def render_face(faces, index: int, scale: float, rotate: int):
+                return render_bgra(faces.__getitem__, index, scale, rotate)
+
+            try:
+                faces = self._printing().print_booklet(name, copies, session.name, sheet, impose, render_face,
+                                                       upside_down_backs=flip, output=output)
+            except PrintError as exc:
+                raise ApiError(str(exc), "print_failed") from exc
+            finally:
+                if "faces" in made:
+                    with FITZ_LOCK:
+                        made["faces"].close()
+            self.app.settings.remember_booklet_flip(name, flip)
+            result.update({"sheets": faces // 2, "faces": faces, "sheet": sheet})
+        else:
+            try:
+                self._printing().print_document(name, copies, session.name, pages, session.page_size,
+                                                session.render_print, output=output)
+            except PrintError as exc:
+                raise ApiError(str(exc), "print_failed") from exc
+        self.app.settings.remember_printer(name)
+        if output:
+            result["output"] = output
+        self._json(result)
+
     def api_pages_insert_dialog(self, query):
         body = self._json_body()
         session = self.app.require_session()
@@ -924,6 +1078,11 @@ for _method, _pattern, _name in (
     ("POST", r"api/save", "api_save"),
     ("POST", r"api/save-as", "api_save_as"),
     ("POST", r"api/export-jpeg", "api_export_jpeg"),
+    ("GET", r"api/printers", "api_printers"),
+    ("GET", r"api/printers/capabilities", "api_printer_capabilities"),
+    ("POST", r"api/print/preferences", "api_print_preferences"),
+    ("GET", r"api/print/booklet-plan", "api_booklet_plan"),
+    ("POST", r"api/print", "api_print"),
     ("GET", r"api/download", "api_download"),
     ("GET", r"api/certificates", "api_certificates"),
     ("GET", r"api/signatures", "api_signatures"),

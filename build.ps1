@@ -31,6 +31,9 @@ $env:DESTRIPDF_TOKEN = 'fumee'
 $env:DESTRIPDF_TEST_PFX = Join-Path $work 'test.pfx'
 $env:DESTRIPDF_TEST_PFX_PASSWORD = 'test-destripdf'
 $env:DESTRIPDF_SETTINGS_DIR = Join-Path $work 'reglages'
+# Impression de fumée écrite dans un fichier, jamais sur une imprimante.
+$env:DESTRIPDF_TEST_PRINT_DIR = Join-Path $work 'impressions'
+New-Item -ItemType Directory -Force $env:DESTRIPDF_TEST_PRINT_DIR | Out-Null
 $frozen = Start-Process -FilePath 'dist\DestriPDF\DestriPDF.exe' -ArgumentList '--serve', '--port', '8799' -PassThru
 try {
     Start-Sleep -Seconds 3
@@ -38,7 +41,7 @@ try {
     $smoke = $LASTEXITCODE
 } finally {
     Stop-Process -Id $frozen.Id -Force -ErrorAction SilentlyContinue
-    Remove-Item Env:DESTRIPDF_TOKEN, Env:DESTRIPDF_TEST_PFX, Env:DESTRIPDF_TEST_PFX_PASSWORD, Env:DESTRIPDF_SETTINGS_DIR -ErrorAction SilentlyContinue
+    Remove-Item Env:DESTRIPDF_TOKEN, Env:DESTRIPDF_TEST_PFX, Env:DESTRIPDF_TEST_PFX_PASSWORD, Env:DESTRIPDF_SETTINGS_DIR, Env:DESTRIPDF_TEST_PRINT_DIR -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 500
     Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
 }

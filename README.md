@@ -15,7 +15,7 @@ signature (certificat eIDAS, marchés publics).
 
 ## Installation
 
-1. Lancer `installer_output\DestriPDF-1.3.0-installation.exe` (ou l'installateur
+1. Lancer `installer_output\DestriPDF-1.3.3-installation.exe` (ou l'installateur
    joint à la release GitHub de la version) et accepter la
    demande d'autorisation de Windows. DestriPDF s'installe pour tous les
    utilisateurs du poste dans `C:\Program Files\DestriPDF` (« Programmes » dans
@@ -82,15 +82,40 @@ affichent. Le panneau « Commentaires » (menu ⋯) les liste toutes.
 
 Les champs d'un formulaire PDF se remplissent directement en mode Sélection.
 
-### Imprimer en livret
+### Imprimer, en livret
 
-Menu ⋯ › Imprimer (Ctrl+P) › Mise en page « Livret » : deux pages côte à côte
-sur chaque face d'une feuille A4 paysage (pages A4 réduites en A5) ou A3
-paysage, dans l'ordre qui donne un cahier une fois la pile pliée au milieu ;
-pages blanches ajoutées à la fin jusqu'à un multiple de 4. Reliure à gauche ou
-à droite. Dans la fenêtre d'impression, choisir recto verso, retourner sur le
-bord court ; sans recto verso automatique, imprimer les rectos, remettre la
-pile dans le bac, puis les versos.
+Menu ⋯ › Imprimer (Ctrl+P) ouvre la boîte Imprimer de DestriPDF : imprimante
+du poste (la dernière utilisée est proposée), pages (toutes, page affichée ou
+« 1-3, 5 »), copies assemblées. « Préférences de l'imprimante… » ouvre la
+fenêtre de réglages du pilote (recto verso, bac, couleur, agrafage), gardés
+jusqu'à la fermeture de DestriPDF.
+
+Mise en page « Livret » : DestriPDF compose lui-même les feuilles — deux pages
+côte à côte par face, dans l'ordre qui donne le livret une fois la pile pliée
+au milieu (feuille 1 à l'extérieur), pages blanches ajoutées à la fin jusqu'à
+un multiple de 4 — sur des feuilles A4 (pages réduites en A5) ou A3 (pages A4
+en taille réelle), reliure à gauche ou à droite. L'aperçu de la feuille 1
+(recto et verso) et l'ordre de toutes les feuilles s'affichent avant
+d'imprimer.
+
+La fonction Livret de l'imprimante n'est jamais utilisée : sur la Canon iR-ADV
+C3520 de l'atelier, elle réclame du papier « A4R » (A4 chargé dans l'autre
+sens) que les bacs n'ont pas. Le livret part comme un document Word recto
+verso ordinaire : A4 (ou A3) en portrait, recto verso bord long, une page par
+feuille, livret et agrafage de l'imprimante désactivés — la Canon n'appliquait
+pas le recto verso d'un travail en paysage bord court. Sur la Canon, ce sont
+exactement ses réglages par défaut : rien n'est changé. Chaque face est tournée
+d'un quart de tour sur la feuille et les versos d'un demi-tour de plus, ce qui
+donne le livret une fois la pile pliée. Les réglages sont relus dans le pilote
+avant l'envoi ; un réglage refusé arrête l'impression avec un message. Si une
+imprimante sortait les versos tête en bas, cocher « Retourner les versos » : le
+choix est retenu pour cette imprimante. Sans recto verso automatique
+(« Microsoft Print to PDF »), les faces sortent l'une après l'autre.
+
+Les pages sont envoyées telles qu'affichées (annotations, champs, signatures
+visibles), à la résolution de l'imprimante (300 ppp au plus), ajustées à la
+feuille ; une page paysage est tournée d'un quart de tour vers la gauche sur une
+feuille portrait, comme dans Acrobat.
 
 ### Exporter en JPG
 

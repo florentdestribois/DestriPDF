@@ -10,8 +10,6 @@ import { Viewer } from './viewer.js';
 import { LineEditor } from './textedit.js';
 import { ToolManager, TOOLS } from './tools.js';
 import { Panel, Sidebar } from './panels.js';
-import { bookletSheetCount, bookletSides } from './booklet.js';
-
 const $ = (id) => document.getElementById(id);
 
 class App {
@@ -599,46 +597,208 @@ class App {
 
   // --- Impression ---
 
-  async openPrint() {
+  // Boîte Imprimer de DestriPDF, comme celle d'Acrobat : imprimante et ses
+  // préférences, mise en page (pages normales ou livret), pages, copies.
+  // Le livret est mis en page par DestriPDF (deux pages par face, ordre du
+  // pliage) et imprimé en A4 paysage recto verso bord court : la fonction
+  // Livret de l'imprimante n'est jamais utilisée (la Canon y réclame du A4R).
+  async print() {
     if (!this.doc) return;
     if (this.editor.isOpen) await this.editor.commit();
-    const count = this.doc.page_count;
+    let list;
+    try {
+      list = await Api.get('api/printers');
+    } catch (err) {
+      toast(err.message, 'error');
+      return;
+    }
+    if (!list.printers.length) {
+      toast('Aucune imprimante installée sur ce poste.', 'error');
+      return;
+    }
+    const doc = this.doc;
+    const total = doc.page_count;
+    const current = this.viewer.current;
+    const printer = el('select', { class: 'text-input', 'aria-label': 'Imprimante' },
+      list.printers.map((name) => el('option', { value: name, text: name === list.default ? `${name} (par défaut)` : name })));
+    printer.value = list.selected || list.printers[0];
+    const preferences = el('button', { class: 'btn btn-ghost', type: 'button', text: 'Préférences de l\'imprimante…' });
+    const prefsNote = el('p', { class: 'help', text: 'Bac, couleur, qualité : préférences de l\'imprimante, comme dans Acrobat.' });
+    if (!this.state?.app?.dialogs) preferences.disabled = true;
+    preferences.addEventListener('click', async () => {
+      preferences.disabled = true;
+      try {
+        const data = await Api.post('api/print/preferences', { printer: printer.value });
+        if (data.changed) prefsNote.textContent = `Préférences de « ${printer.value} » enregistrées pour cette impression et les suivantes.`;
+      } catch (err) {
+        toast(err.message, 'error');
+      } finally {
+        preferences.disabled = false;
+      }
+    });
+
     const layout = el('select', { class: 'text-input', 'aria-label': 'Mise en page' },
-      el('option', { value: 'normal', text: 'Pages normales — une page par face' }),
+      el('option', { value: 'normal', text: 'Pages normales' }),
       el('option', { value: 'booklet', text: 'Livret — deux pages par face, pliées au milieu' }));
-    const paper = el('select', { class: 'text-input', 'aria-label': 'Feuille' },
-      el('option', { value: 'a4', text: 'A4 paysage (pages A4 réduites en A5)' }),
-      el('option', { value: 'a3', text: 'A3 paysage (pages A4 en taille réelle)' }));
+    const scope = el('select', { class: 'text-input', 'aria-label': 'Pages à imprimer' },
+      el('option', { value: 'all', text: `Toutes (${total} page${total > 1 ? 's' : ''})` }),
+      el('option', { value: 'current', text: `Page affichée (${current + 1})` }),
+      el('option', { value: 'range', text: 'Pages choisies…' }));
+    const range = el('input', { class: 'text-input', type: 'text', placeholder: `Par exemple 1-3, 5 (sur ${total})`, 'aria-label': 'Pages choisies', hidden: true, autocomplete: 'off' });
+    const copies = el('input', { class: 'num-input', type: 'number', min: '1', max: '99', step: '1', value: '1', 'aria-label': 'Copies' });
+    const pagesValue = () => (scope.value === 'range' ? range.value : scope.value);
+
+    // --- Livret ---
+    const sheet = el('select', { class: 'text-input', 'aria-label': 'Feuille du livret' });
     const binding = el('select', { class: 'text-input', 'aria-label': 'Reliure' },
-      el('option', { value: 'left', text: 'À gauche' }),
+      el('option', { value: 'left', text: 'À gauche (lecture habituelle)' }),
       el('option', { value: 'right', text: 'À droite' }));
-    const sides = el('select', { class: 'text-input', 'aria-label': 'Faces à imprimer' },
-      el('option', { value: 'both', text: 'Recto verso' }),
-      el('option', { value: 'front', text: 'Rectos seulement' }),
-      el('option', { value: 'back', text: 'Versos seulement' }));
-    const sheets = bookletSheetCount(count);
-    const blanks = sheets * 4 - count;
-    const summary = el('p', { class: 'help', text: `${sheets} feuille${sheets > 1 ? 's' : ''} pour ${count} page${count > 1 ? 's' : ''}${blanks ? `, ${blanks} page${blanks > 1 ? 's' : ''} blanche${blanks > 1 ? 's' : ''} à la fin` : ''}.` });
-    const options = el('div', { class: 'print-booklet-options', hidden: true },
-      el('label', { class: 'field-label spaced', text: 'Feuille' }), paper,
-      el('label', { class: 'field-label spaced', text: 'Reliure' }), binding,
-      el('label', { class: 'field-label spaced', text: 'Faces' }), sides,
-      summary,
-      el('p', { class: 'help', text: 'Dans la fenêtre d\'impression : recto verso, retourner sur le bord court. Sans recto verso automatique, imprimez les rectos, remettez la pile dans le bac, puis les versos.' }));
-    layout.addEventListener('change', () => { options.hidden = layout.value !== 'booklet'; });
-    const body = el('div', {}, el('label', { class: 'field-label', text: 'Mise en page' }), layout, options);
+    const flip = el('input', { type: 'checkbox' });
+    const duplexNote = el('p', { class: 'help' });
+    const plan = el('p', { class: 'help' });
+    const preview = el('div', { class: 'booklet-preview', 'aria-label': 'Aperçu de la feuille 1' });
+    const bookletBox = el('div', { class: 'print-booklet-box', hidden: true },
+      el('div', { class: 'print-columns' },
+        el('div', {}, el('label', { class: 'field-label', text: 'Feuille' }), sheet),
+        el('div', {}, el('label', { class: 'field-label', text: 'Reliure' }), binding)),
+      duplexNote,
+      el('label', { class: 'check' }, flip, el('span', { text: 'Retourner les versos (s\'ils sont sortis tête en bas au premier essai)' })),
+      preview, plan);
+    let caps = null;
+    const sheetLabels = { a4: 'A4 → livret A5', a3: 'A3 → livret A4' };
+    const pageImage = (number) => {
+      const info = doc.pages[number - 1];
+      const scale = Math.min(0.3, 150 / Math.max(info.w, info.h));
+      return el('img', { class: 'booklet-page', alt: `Page ${number}`, src: `api/page/${number - 1}/image?d=${doc.id}&s=${scale.toFixed(3)}&v=${info.v}` });
+    };
+    // Une page paysage tourne d'un quart de tour vers la gauche dans sa demi-feuille,
+    // comme à l'impression.
+    const turned = (number) => doc.pages[number - 1].w > doc.pages[number - 1].h;
+    const faceFigure = (face, caption) => el('figure', { class: 'booklet-face' },
+      el('div', { class: 'booklet-sheet' }, face.map((number) => el('div', { class: `booklet-slot${number ? '' : ' blank'}${number && turned(number) ? ' turned' : ''}` },
+        number ? pageImage(number) : el('span', { text: 'blanche' }),
+        number ? el('span', { class: 'booklet-number', text: String(number) }) : null))),
+      el('figcaption', { text: caption }));
+    let planSeq = 0;
+    const refreshPlan = async () => {
+      if (layout.value !== 'booklet') return;
+      const seq = ++planSeq;
+      try {
+        const query = `pages=${encodeURIComponent(pagesValue())}&current=${current}&binding=${binding.value}`;
+        const data = await Api.get(`api/print/booklet-plan?${query}`);
+        if (seq !== planSeq) return;
+        preview.replaceChildren(faceFigure(data.faces[0], 'Feuille 1 — recto'), faceFigure(data.faces[1], 'Feuille 1 — verso'));
+        const blanks = data.sheets * 4 - data.pages;
+        const describe = (face) => face.map((n) => n || '–').join(' | ');
+        const lines = [];
+        for (let s = 0; s < Math.min(data.sheets, 6); s += 1) lines.push(`feuille ${s + 1} : ${describe(data.faces[2 * s])} / ${describe(data.faces[2 * s + 1])}`);
+        if (data.sheets > 6) lines.push('…');
+        plan.textContent = `${data.sheets} feuille${data.sheets > 1 ? 's' : ''} ${(sheet.value || 'a4').toUpperCase()} pour ${data.pages} page${data.pages > 1 ? 's' : ''}`
+          + `${blanks ? `, ${blanks} page${blanks > 1 ? 's' : ''} blanche${blanks > 1 ? 's' : ''} à la fin` : ''}. Pliez la pile au milieu, feuille 1 à l'extérieur. `
+          + `Ordre (recto / verso) — ${lines.join(' · ')}`;
+      } catch (err) {
+        if (seq !== planSeq) return;
+        preview.replaceChildren();
+        plan.textContent = err.message;
+      }
+    };
+    let capsSeq = 0;
+    const loadCaps = async () => {
+      const seq = ++capsSeq;
+      caps = null;
+      duplexNote.textContent = 'Lecture des capacités de l\'imprimante…';
+      try {
+        const data = await Api.get(`api/printers/capabilities?printer=${encodeURIComponent(printer.value)}`);
+        if (seq !== capsSeq) return;
+        caps = data;
+        const previous = sheet.value;
+        sheet.replaceChildren(...data.sheets.map((id) => el('option', { value: id, text: sheetLabels[id] || id.toUpperCase() })));
+        if (data.sheets.includes(previous)) sheet.value = previous;
+        flip.checked = Boolean(data.flip_backs);
+        if (!data.sheets.length) duplexNote.textContent = 'Cette imprimante ne propose ni A4 ni A3 : livret impossible.';
+        else duplexNote.textContent = data.duplex
+          ? 'Recto verso automatique, envoyé comme un document Word (A4 portrait, bord long) : DestriPDF tourne lui-même les faces et les versos.'
+          : 'Cette imprimante n\'imprime pas en recto verso : les faces sortent l\'une après l\'autre (recto, verso, recto…).';
+      } catch (err) {
+        if (seq === capsSeq) duplexNote.textContent = err.message;
+      }
+    };
+    const showLayout = () => {
+      bookletBox.hidden = layout.value !== 'booklet';
+      refreshPlan();
+    };
+    let rangeTimer = null;
+    printer.addEventListener('change', loadCaps);
+    layout.addEventListener('change', showLayout);
+    binding.addEventListener('change', refreshPlan);
+    sheet.addEventListener('change', refreshPlan);
+    scope.addEventListener('change', () => {
+      range.hidden = scope.value !== 'range';
+      if (!range.hidden) range.focus();
+      refreshPlan();
+    });
+    range.addEventListener('input', () => {
+      clearTimeout(rangeTimer);
+      rangeTimer = setTimeout(refreshPlan, 300);
+    });
+    loadCaps();
+
+    const body = el('div', { class: 'print-dialog' },
+      el('label', { class: 'field-label', text: 'Imprimante' }),
+      el('div', { class: 'print-row' }, printer, preferences),
+      prefsNote,
+      el('label', { class: 'field-label spaced', text: 'Mise en page' }), layout,
+      bookletBox,
+      el('label', { class: 'field-label spaced', text: 'Pages' }), scope, range,
+      el('label', { class: 'field-label spaced', text: 'Copies' }), copies);
     const choice = await modal({
       title: 'Imprimer',
       body,
-      buttons: [{ label: 'Annuler', value: null }, { label: 'Imprimer', value: 'ok', kind: 'btn-primary', default: true }],
+      wide: true,
+      buttons: [{ label: 'Annuler', value: null }, {
+        label: 'Imprimer',
+        value: 'ok',
+        kind: 'btn-primary',
+        default: true,
+        validate: () => {
+          if (layout.value !== 'booklet') return true;
+          if (!caps) {
+            toast('Capacités de l\'imprimante en cours de lecture : réessayez dans un instant.', 'error');
+            return false;
+          }
+          if (!caps.sheets.length) {
+            toast('Cette imprimante ne permet pas le livret.', 'error');
+            return false;
+          }
+          return true;
+        },
+      }],
+      onOpen: () => printer.focus(),
     });
+    clearTimeout(rangeTimer);
     if (choice !== 'ok') return;
-    if (layout.value === 'booklet') await this.print({ booklet: { paper: paper.value, binding: binding.value, sides: sides.value } });
-    else await this.print();
+    const payload = { printer: printer.value, pages: pagesValue(), current, copies: Number(copies.value), layout: layout.value };
+    if (layout.value === 'booklet') Object.assign(payload, { sheet: sheet.value, binding: binding.value, flip_backs: flip.checked });
+    const indicator = busy(layout.value === 'booklet' ? 'Mise en page du livret et envoi à l\'imprimante…' : 'Envoi à l\'imprimante…');
+    try {
+      const data = await Api.post('api/print', payload);
+      const copiesText = data.copies > 1 ? `, ${data.copies} exemplaires` : '';
+      if (data.layout === 'booklet') {
+        toast(`Livret envoyé à « ${printer.value} » : ${data.sheets} feuille${data.sheets > 1 ? 's' : ''} ${data.sheet.toUpperCase()} recto verso${copiesText}. Pliez la pile au milieu.`, 'ok', { duration: 9000 });
+      } else {
+        const count = `${data.pages} page${data.pages > 1 ? 's' : ''}`;
+        toast(`${count} envoyée${data.pages > 1 ? 's' : ''} à « ${printer.value} »${copiesText}.`, 'ok');
+      }
+    } catch (err) {
+      if (err.code === 'no_dialog' && layout.value === 'normal') this.webPrint();
+      else toast(err.message, 'error');
+    } finally {
+      indicator.close();
+    }
   }
 
-  async print({ booklet = null } = {}) {
-    if (!this.doc) return;
+  // Navigateur sans pilote (développement) : impression de la page web.
+  async webPrint() {
     const root = $('print-root');
     root.textContent = '';
     const indicator = busy("Préparation de l'impression…");
@@ -646,35 +806,14 @@ class App {
     const count = this.doc.page_count;
     const dpi = count <= 30 ? 150 : count <= 120 ? 110 : 80;
     const scale = dpi / 72;
-    const url = (index) => `api/page/${index}/image?d=${this.doc.id}&s=${scale}&v=${this.doc.pages[index].v}`;
     try {
-      let images;
-      if (booklet) {
-        // Une face de feuille paysage par bloc, deux demi-feuilles où chaque page
-        // est réduite sans déformation et centrée.
-        images = [];
-        for (const face of bookletSides(count, booklet)) {
-          const sheet = el('div', { class: `print-sheet print-sheet-${booklet.paper}` });
-          for (const index of [face.left, face.right]) {
-            const slot = el('div', { class: 'print-slot' });
-            if (index !== null) {
-              const img = el('img', { class: 'print-slot-page', alt: '' });
-              slot.append(img);
-              images.push({ img, url: url(index) });
-            }
-            sheet.append(slot);
-          }
-          root.append(sheet);
-        }
-      } else {
-        images = this.doc.pages.map((info, index) => {
-          const img = el('img', { class: 'print-page', alt: '' });
-          img.style.width = `${info.w}pt`;
-          img.style.height = `${info.h}pt`;
-          root.append(img);
-          return { img, url: url(index) };
-        });
-      }
+      const images = this.doc.pages.map((info, index) => {
+        const img = el('img', { class: 'print-page', alt: '' });
+        img.style.width = `${info.w}pt`;
+        img.style.height = `${info.h}pt`;
+        root.append(img);
+        return { img, url: `api/page/${index}/image?d=${this.doc.id}&s=${scale}&v=${info.v}` };
+      });
       let done = 0;
       const queue = [...images];
       const worker = async () => {
@@ -866,8 +1005,7 @@ class App {
     showMenu(anchor, [
       { label: 'Enregistrer sous…', icon: 'saveAs', shortcut: 'Ctrl+Maj+S', disabled: !doc, action: () => this.saveAs() },
       ...(this.state?.app?.dialogs ? [] : [{ label: 'Télécharger', icon: 'download', disabled: !doc, action: () => this.download() }]),
-      { label: 'Imprimer…', icon: 'print', shortcut: 'Ctrl+P', disabled: !doc, action: () => this.openPrint() },
-      { label: 'Exporter en JPG…', icon: 'image', disabled: !doc, action: () => this.exportJpeg() },
+      { label: 'Imprimer…', icon: 'print', shortcut: 'Ctrl+P', disabled: !doc, action: () => this.print() },      { label: 'Exporter en JPG…', icon: 'image', disabled: !doc, action: () => this.exportJpeg() },
       { label: 'Fermer le document', icon: 'close', disabled: !doc, action: () => this.closeDocument() },
       '-',
       { label: 'Pivoter la page à droite', icon: 'rotate', disabled: !doc, action: () => this.rotatePages([current], 90) },
@@ -981,7 +1119,7 @@ class App {
       if (ctrl && key === 'o') { e.preventDefault(); this.openDialog(); return; }
       if (ctrl && key === 's') { e.preventDefault(); if (e.shiftKey) this.saveAs(); else this.save(); return; }
       if (!this.doc) return;
-      if (ctrl && key === 'p') { e.preventDefault(); this.openPrint(); return; }
+      if (ctrl && key === 'p') { e.preventDefault(); this.print(); return; }
       if (ctrl && key === 'f') { e.preventDefault(); $('search-input').focus(); $('search-input').select(); return; }
       if (ctrl && (key === '+' || key === '=')) { e.preventDefault(); this.viewer.zoomStep(1); return; }
       if (ctrl && (key === '-' || key === '_')) { e.preventDefault(); this.viewer.zoomStep(-1); return; }

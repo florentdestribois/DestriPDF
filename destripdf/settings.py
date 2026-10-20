@@ -23,6 +23,8 @@ DEFAULTS = {
     "sign_ltv": True,
     "timestamp_url": "",
     "last_dir": "",
+    "last_printer": "",
+    "booklet_flipped": [],  # imprimantes dont les versos de livret sortent à l'envers
     "theme": "auto",
     "recent": [],
 }
@@ -91,6 +93,19 @@ class Settings:
     def remember_dir(self, path: str) -> None:
         with self._lock:
             self._data["last_dir"] = str(Path(path).parent)
+            self._save()
+
+    def remember_printer(self, name: str) -> None:
+        with self._lock:
+            self._data["last_printer"] = name
+            self._save()
+
+    def remember_booklet_flip(self, printer: str, flipped: bool) -> None:
+        with self._lock:
+            names = [n for n in self._data["booklet_flipped"] if isinstance(n, str) and n != printer]
+            if flipped:
+                names.append(printer)
+            self._data["booklet_flipped"] = names[-20:]
             self._save()
 
     def add_recent(self, path: str) -> None:

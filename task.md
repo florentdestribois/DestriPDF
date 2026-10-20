@@ -331,10 +331,179 @@ pages, permets cela avec DestriPDF ».
   « DestriPDF 1.3.0 » ; lancement sans droits : fenêtre en 0,9 s, fermeture
   propre.
 
+## Version 1.3.1 — livret par l'imprimante, 19 octobre 2026 (non publiée)
+
+Retour de Florent sur la 1.3.0 : « ce n'est pas bon, il ne s'imprime pas comme
+un vrai livret, c'est une option des paramètres d'imprimante qu'il faut
+lancer ».
+
+### Constats
+
+- [x] La 1.3.0 imprimait par l'aperçu d'Edge, sans accès aux réglages du pilote.
+- [x] `ShowPrintUI(System)` de WebView2 et même `PrintDlgEx` ouvrent sur ce poste
+  la boîte moderne de Windows 11 (« … – Imprimer »), sans accès sûr au pilote.
+- [x] Imprimante de l'atelier : Canon iR-ADV C3520, « Canon Office XPS Class
+  Driver ». Ses capacités déclarent `psk:JobBindAllDocuments` = `psk:Booklet`,
+  mais sa fenêtre de réglages (onglets Disposition, Papier/qualité) ne montre
+  que « Pages par feuille » : le livret ne s'y choisit pas.
+
+### Réalisé
+
+- [x] `destripdf/printing.py` : imprimantes du poste et imprimante par défaut,
+  préférences du pilote (`DocumentProperties`, au-dessus de la fenêtre, gardées
+  pour la session), option Livret par le schéma d'impression converti en
+  DEVMODE, copies assemblées dans le DEVMODE, pages rendues par MuPDF à la
+  résolution de l'imprimante (300 ppp au plus), ajustées, centrées, page paysage
+  tournée vers la gauche, envoi GDI.
+- [x] Routes `GET api/printers`, `GET api/printers/capabilities`,
+  `POST api/print/preferences`, `POST api/print` (imprimante du poste exigée,
+  pages « 1-3, 5 », copies 1 à 99) ; dernière imprimante retenue
+  (`last_printer`).
+- [x] Boîte Imprimer de l'interface (Ctrl+P, menu ⋯) : imprimante, bouton
+  « Préférences de l'imprimante… », case « Imprimer en livret » grisée si le
+  pilote ne la propose pas, pages, copies. Mise en page livret maison de la 1.3.0
+  retirée (`booklet.js`). Impression web gardée en secours (`webPrint`).
+- [x] Défauts trouvés et corrigés en recette : page pivotée imprimée à l'envers
+  (sens du quart de tour ; test qui échouait sur l'ancien code) ; erreur 500 sur
+  les capacités quand deux requêtes chargeaient .NET en même temps (verrou).
+
+### Validations
+
+- [x] Tests : 97 (routes et refus, plages de pages, copies, placement, rendu
+  BGRA, page pivotée droite, requêtes simultanées ; envoi réel au pilote
+  « Microsoft Print to PDF » : 2 exemplaires assemblés 1-2-1-2, page paysage
+  tournée ; livret sur le vrai pilote Canon : option inscrite, gardée avec
+  2 copies, retirée — sans rien imprimer).
+- [x] Fenêtre WebView2 réelle : préférences du pilote Canon ouvertes au-dessus de
+  la fenêtre (bloquée pendant ce temps), Annuler sans effet.
+- [x] Recette Edge : 30 parcours sur 30 ; boîte Imprimer (livret proposé pour la
+  Canon seule), page 2 imprimée dans un fichier par « Microsoft Print to PDF »,
+  droite (capture relue).
+- [x] `build.ps1` 1.3.1 : 97 tests, fumée de l'exécutable figé 19/19
+  (imprimantes, options des pilotes, impression par le pilote), installateur.
+- [x] Installée sur le poste à la demande de Florent, pour essai avant
+  publication (1.3.0 → 1.3.1, autorisation Windows acceptée) : 717 fichiers
+  identiques au paquet, entrée « DestriPDF 1.3.1 », fenêtre en 0,8 s sans
+  droits. `booklet.js` de la 1.3.0 resté dans le dossier (inutilisé) : retiré par
+  `[InstallDelete]` à la prochaine construction.
+- [x] Essai de Florent sur la Canon : échec, « cela demande un papier A4r à
+  l'imprimante qu'elle ne connaît pas » (fonction Livret de l'imprimante).
+  Remplacée en 1.3.2.
+
+## Version 1.3.2 — livret mis en page par DestriPDF, 19 octobre 2026 (non publiée)
+
+Demande de Florent : « ça ne fonctionne pas. Revoit complètement cette fonction
+afin de garantir que ça marche ».
+
+### Constats
+
+- [x] File d'impression locale de la Canon vide (aucun travail bloqué côté
+  poste). Le pilote ne connaît aucun format « A4R » : c'est la fonction Livret
+  de l'imprimante qui le réclame (A4 chargé dans l'autre sens, pour son pliage).
+- [x] Le pilote propose A4 et A3 ordinaires (`psk:ISOA4`, `psk:ISOA3`), le
+  recto verso bord court, l'orientation paysage, la désactivation du livret et
+  de l'agrafage, une page par feuille. Ticket utilisateur par défaut : recto
+  verso bord long (cause probable des versos tête en bas de la 1.3.0).
+
+### Réalisé
+
+- [x] `destripdf/booklet.py` : ordre de piqûre à cheval, faces composées en
+  PDF (pages telles qu'affichées, annotations et champs intégrés à une copie,
+  rotation compensée, page paysage tournée vers la gauche), marge au pli et aux
+  bords. La fonction Livret des imprimantes n'est plus jamais demandée.
+- [x] `printing.py` : réglages imposés pour cette impression (format ordinaire
+  décrit en portrait, jamais tourné ; paysage ; recto verso bord court ; livret
+  et agrafage de l'imprimante désactivés ; une page par feuille), relus dans le
+  pilote avant l'envoi, refus explicite sinon ; faces posées sur tout le papier,
+  taille réelle, pli au milieu exact ; versos retournés sur demande.
+- [x] Routes : `GET api/print/booklet-plan`, `POST api/print` avec
+  `layout`/`sheet`/`binding`/`flip_backs` ; « Retourner les versos » retenu par
+  imprimante (`booklet_flipped`).
+- [x] Boîte Imprimer : mise en page (pages normales, livret), feuille A4 → livret
+  A5 ou A3 → livret A4, reliure, retournement des versos, aperçu de la feuille 1
+  (recto, verso, page paysage tournée comme à l'impression) et ordre de toutes
+  les feuilles. Modales défilantes quand l'écran est bas (1024×680).
+
+### Validations
+
+- [x] Tests : 116 (ordre des faces, chaque page une fois, composition :
+  moitiés, marges, pli, pages pivotées et paysage, annotations et champs,
+  document ouvert intact ; réglages du livret ; papier tourné refusé ; placement
+  sur le papier ; routes et refus). Sur les vrais pilotes du poste, Canon
+  comprise, sans impression papier : réglages acceptés et relus (A4 ordinaire,
+  paysage, bord court, livret et agrafage désactivés, 1 page par feuille,
+  2 copies) ; papier annoncé 297 × 210 mm. Livret réel imprimé par
+  « Microsoft Print to PDF » : 6 pages → 4 faces A4 paysage, chaque page
+  reconnue à sa couleur, à sa place et droite ; versos retournés sur demande.
+- [x] Recette Edge : 31 parcours sur 31 (aperçu et plan, 1024×680, livret et
+  page imprimés dans des fichiers ; captures relues).
+- [x] `build.ps1` 1.3.2 : 116 tests, fumée de l'exécutable figé 20/20 (livret
+  compris), installateur `DestriPDF-1.3.2-installation.exe`.
+- [x] Installée sur le poste à la demande de Florent, pour essai sur la Canon
+  (1.3.1 → 1.3.2, autorisation Windows acceptée) : 717 fichiers identiques au
+  paquet (celui du test de fumée 20/20), `booklet.js` de la 1.3.0 retiré par
+  `[InstallDelete]`, entrée « DestriPDF 1.3.2 » ; lancement sans droits :
+  fenêtre en 0,45 s (0,83 s mesurée de l'extérieur), interface en 0,89 s,
+  fermeture propre.
+- [x] Essai de Florent sur la Canon : « elle imprime pas en recto verso » —
+  deux pages par face, en paysage, mais une seule face par feuille. Word et
+  Acrobat impriment pourtant en recto verso sur cette Canon depuis ce poste.
+  Corrigé en 1.3.3.
+
+## Version 1.3.3 — livret envoyé comme un document Word, 19 octobre 2026 (non publiée)
+
+### Constats (sans impression papier : travail du pilote Canon capturé dans un fichier)
+
+- [x] Pilote « Canon Office XPS Class Driver » (v4, port WSD, impression XPS
+  directe) : Windows convertit le travail en XPS, le filtre Canon le transmet
+  tel quel (aucun traitement du recto verso), la Canon applique le ticket.
+- [x] Le XPS du livret 1.3.2 demandait bien le recto verso
+  (`JobDuplexAllDocumentsContiguously = TwoSidedShortEdge`, privé Canon
+  `Duplex HORIZONTAL`, paysage) : la Canon ne l'a pas appliqué. Les documents
+  Word partent en A4 portrait, bord long (réglages par défaut de la Canon).
+
+### Réalisé
+
+- [x] Livret envoyé comme un document Word recto verso : A4 (ou A3) portrait,
+  bord long ; seuls les réglages qui diffèrent sont changés. Sur la Canon,
+  aucun : DEVMODE par défaut (copies mises à part) et ticket XPS identique à
+  celui d'une impression normale (vérifié dans les fichiers produits).
+- [x] Faces tournées d'un quart de tour vers la gauche sur la feuille portrait,
+  versos d'un demi-tour de plus en bord long (`backs_half_turn`) ; bord court
+  gardé seulement pour un pilote qui n'aurait que lui (versos sans demi-tour).
+  « Retourner les versos » inverse le choix.
+- [x] Aperçu et textes de la boîte Imprimer, README, plan.
+
+### Validations
+
+- [x] Tests : 120, dont une feuille simulée sur les vrais pixels : recto et
+  verso imprimés selon la définition du retournement (bord long : autour des
+  grands côtés du papier ; bord court : des petits), lus comme un lecteur
+  (recto tourné pour lire la page de droite, feuille retournée autour du pli).
+  Livret juste pour 4 et 8 pages en A4 portrait bord long, juste en paysage bord
+  court, et faux (versos tête en bas, pages inversées) si le demi-tour manque :
+  la simulation distingue bien le juste du faux.
+- [x] Réglages relus sur chaque pilote du poste, Canon comprise : A4 portrait,
+  bord long, livret et agrafage désactivés, papier annoncé 210 × 297 mm.
+- [x] Recette Edge : 31 parcours sur 31 (livret imprimé dans un fichier : faces
+  tournées sur A4 portrait, capture relue).
+- [x] `build.ps1` 1.3.3 : 120 tests, fumée de l'exécutable figé 20/20,
+  installateur `DestriPDF-1.3.3-installation.exe`.
+- [x] Installée sur le poste à la demande de Florent, pour essai sur la Canon
+  (1.3.2 → 1.3.3, autorisation Windows acceptée) : 717 fichiers identiques au
+  paquet, exécutable identique à celui du test de fumée 20/20, entrée
+  « DestriPDF 1.3.3 » ; lancement sans droits : fenêtre en 0,56 s, interface
+  en 0,81 s. Florent a rouvert son document dans la 1.3.3 depuis l'Explorateur.
+- [x] Retour de Florent après l'installation de la 1.3.3 : « ok commit push ».
+  Commit et push sur `main` (20 octobre) ; pas de release demandée : `v1.3.0`
+  reste la dernière publiée.
+
 ### Reste à faire / limites
 
-- [ ] Livret : pas de découpage en cahiers (« signatures » d'Acrobat) ni de
-  plage de feuilles ; pages paysage non tournées automatiquement.
+- [ ] Imprimante sans recto verso automatique : faces imprimées à la suite, pas
+  d'assistant de recto verso manuel.
+- [ ] Imprimante réseau : le pilote interroge l'imprimante (capacités) à
+  l'ouverture de la boîte Imprimer, par le spouleur de Windows.
 - [ ] Cause du blocage au lancement par DestriCenter toujours inconnue : au
   prochain cas, lire `logs\blocage-….txt` (piles) et le journal de démarrage.
 - [ ] Signature réelle avec la clé CertEurope puis contrôle dans Acrobat :

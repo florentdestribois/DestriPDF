@@ -3,7 +3,6 @@
 Usage : python scripts/recette/parcours_complements.py <captures> <dossier d'échantillons>
 L'instance doit tourner en mode recette sur http://127.0.0.1:8790/recette/.
 """
-import base64
 import json
 import sys
 import time
@@ -174,10 +173,10 @@ try:
         post("settings", {"theme": "auto"})
         edge.js("window.__app.settings.theme = 'auto'; window.__app.applyTheme()")
 
-    @step("Préparation de l'impression (pages en 150 ppp)")
+    @step("Impression web de secours (pages en 150 ppp)")
     def _():
         edge.js("window.print = () => { window.__printed = (window.__printed || 0) + 1; }")
-        edge.js("void window.__app.print()")
+        edge.js("void window.__app.webPrint()")
         edge.wait_for("window.__printed === 1", timeout=20)
         count = edge.js("document.querySelectorAll('#print-root img').length")
         assert count == edge.js("window.__app.doc.page_count"), count
@@ -187,50 +186,92 @@ try:
         edge.shot(OUT / "r3-07-impression.png")
         edge.call("Emulation.setEmulatedMedia", media="")
 
-    @step("Imposition en livret : ordre des pages et pages blanches")
-    def _():
-        sides = edge.js("""import('./static/js/booklet.js').then(m => [1, 2, 4, 5, 8].map(n => m.bookletSides(n).map(f => [f.left, f.right]))
-            .concat([m.bookletSides(8, {binding: 'right'}).map(f => [f.left, f.right]),
-                     m.bookletSides(8, {sides: 'front'}).map(f => [f.left, f.right]),
-                     m.bookletSides(8, {sides: 'back'}).map(f => [f.left, f.right])]))""")
-        expected = [
-            [[None, 0], [None, None]],
-            [[None, 0], [1, None]],
-            [[3, 0], [1, 2]],
-            [[None, 0], [1, None], [None, 2], [3, 4]],
-            [[7, 0], [1, 6], [5, 2], [3, 4]],
-            [[0, 7], [6, 1], [2, 5], [4, 3]],
-            [[7, 0], [5, 2]],
-            [[1, 6], [3, 4]],
-        ]
-        assert sides == expected, sides
-
-    @step("Imprimer en livret : boîte Imprimer, feuilles A4 paysage")
-    def _():
-        edge.js("window.__printed = 0")
+    def print_dialog(printer, layout="normal"):
+        """Ouvre la boîte Imprimer (Ctrl+P), choisit l'imprimante et la mise en page."""
         edge.key("p", modifiers=CTRL)
         edge.wait_for("document.querySelector('.modal-title') && document.querySelector('.modal-title').textContent === 'Imprimer'")
-        assert edge.js("document.querySelector('.print-booklet-options').hidden")
-        edge.js("(() => { const s = document.querySelector('.modal select'); s.value = 'booklet'; s.dispatchEvent(new Event('change')); })()")
-        assert not edge.js("document.querySelector('.print-booklet-options').hidden")
+        edge.js(f"""(() => {{ const q = (l) => document.querySelector(`.modal [aria-label="${{l}}"]`);
+            q('Imprimante').value = {json.dumps(printer)}; q('Imprimante').dispatchEvent(new Event('change'));
+            q('Mise en page').value = {json.dumps(layout)}; q('Mise en page').dispatchEvent(new Event('change')); }})()""")
+        edge.wait_for("!document.querySelector('.print-booklet-box .help').textContent.startsWith('Lecture')", timeout=30)
+
+    def new_print(before, timeout=30):
+        out_dir = RECETTE / "impressions"
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            new = [f for f in set(out_dir.glob("*.pdf")) - before if f.stat().st_size > 0]
+            if new:
+                time.sleep(0.5)
+                return fitz.open(new[0])
+            time.sleep(0.3)
+        raise AssertionError("aucun fichier imprimé")
+
+    @step("Boîte Imprimer : livret mis en page par DestriPDF, aperçu et plan")
+    def _():
+        names = api("printers")["printers"]
+        assert "Microsoft Print to PDF" in names, names
+        canon = next((n for n in names if "C3520" in n), None)
+        print_dialog(canon or "Microsoft Print to PDF", "booklet")
+        assert not edge.js("document.querySelector('.print-booklet-box').hidden")
+        edge.wait_for("document.querySelectorAll('.booklet-preview .booklet-slot').length === 4", timeout=20)
+        edge.wait_for("[...document.querySelectorAll('.booklet-preview img')].every(i => i.complete && i.naturalWidth > 0)", timeout=20)
+        sheets = edge.js("[...document.querySelector('.modal [aria-label=\"Feuille du livret\"]').options].map(o => o.value)")
+        assert "a4" in sheets, sheets
+        note = edge.js("document.querySelector('.print-booklet-box .help').textContent")
+        plan = edge.js("document.querySelector('.booklet-preview + .help').textContent")
+        print("    note :", note)
+        print("    plan :", plan)
+        assert ("Recto verso automatique" in note) if canon else ("pas en recto verso" in note)
+        assert "1 feuille A4 pour 2 pages" in plan and "feuille 1 : – | 1 / 2 | –" in plan, plan
+        numbers = edge.js("[...document.querySelectorAll('.booklet-preview .booklet-slot')].map(s => s.classList.contains('blank') ? null : Number(s.querySelector('.booklet-number').textContent))")
+        assert numbers == [None, 1, 2, None], numbers
+        # page 2 pivotée en paysage : tournée dans sa demi-feuille, comme à l'impression
+        assert edge.js("[...document.querySelectorAll('.booklet-preview .booklet-slot.turned .booklet-number')].map(n => n.textContent)") == ["2"]
+        assert edge.js("""(() => { const i = document.querySelector('.booklet-slot.turned img').getBoundingClientRect();
+            return i.height > i.width; })()"""), "vignette paysage non tournée"
         edge.shot(OUT / "r3-07c-livret-boite.png")
+        # 1024×680 : la boîte défile, le bouton Imprimer reste atteignable
+        edge.viewport(1024, 680)
+        time.sleep(0.4)
+        edge.shot(OUT / "r3-07c-livret-1024.png")
+        reachable = edge.js("""(() => { const m = document.querySelector('.modal'); m.scrollTop = m.scrollHeight;
+            const b = [...m.querySelectorAll('.btn-primary')][0].getBoundingClientRect();
+            return b.bottom <= innerHeight && b.top >= 0 && document.documentElement.scrollWidth <= innerWidth; })()""")
+        edge.viewport(1280, 720)
+        assert reachable, "bouton Imprimer hors d'atteinte en 1024×680"
+        edge.key("Escape")
+        edge.wait_for("!document.querySelector('.modal')")
+
+    @step("Imprimer un livret sur « Microsoft Print to PDF » (sortie dans un fichier)")
+    def _():
+        before = set((RECETTE / "impressions").glob("*.pdf"))
+        print_dialog("Microsoft Print to PDF", "booklet")
+        edge.wait_for("document.querySelector('.modal [aria-label=\"Feuille du livret\"]').options.length > 0", timeout=20)
         edge.js("[...document.querySelectorAll('.modal .btn-primary')][0].click()")
-        edge.wait_for("window.__printed === 1", timeout=20)
-        pages = edge.js("window.__app.doc.page_count")
-        sheets = edge.js("document.querySelectorAll('#print-root .print-sheet').length")
-        assert sheets == 2 * ((pages + 3) // 4), (pages, sheets)
-        assert edge.js("document.querySelectorAll('#print-root .print-slot img').length") == pages
-        assert edge.js("[...document.querySelectorAll('#print-root img')].every(i => i.complete && i.naturalWidth > 1000)")
-        edge.call("Emulation.setEmulatedMedia", media="print")
-        box = edge.js("(() => { const r = document.querySelector('.print-sheet').getBoundingClientRect(); return [r.width, r.height]; })()")
-        assert abs(box[0] - 297 / 25.4 * 96) < 2 and box[0] > box[1], box
-        edge.shot(OUT / "r3-07d-livret.png")
-        edge.call("Emulation.setEmulatedMedia", media="")
-        # Sortie réelle du moteur d'impression : une feuille A4 paysage par face.
-        printed = fitz.open("pdf", base64.b64decode(edge.call("Page.printToPDF", preferCSSPageSize=True)["data"]))
-        assert printed.page_count == sheets, (printed.page_count, sheets)
-        assert all(abs(p.rect.width - 842) < 2 and abs(p.rect.height - 595) < 2 for p in printed), [p.rect for p in printed]
-        printed.save(OUT / "r3-07e-livret.pdf")
+        edge.wait_for("[...document.querySelectorAll('.toast')].some(t => t.textContent.includes('Livret envoyé'))", timeout=60)
+        printed = new_print(before)
+        assert printed.page_count == 2, printed.page_count  # 2 pages → 1 feuille, recto et verso
+        # feuilles A4 portrait, comme un document Word ; faces tournées d'un quart de tour
+        assert all(p.rect.height > p.rect.width and abs(p.rect.height - 842) < 3 for p in printed), [p.rect for p in printed]
+        sheet = fitz.open()
+        canvas = sheet.new_page(width=595 * 2 + 20, height=842)
+        for i, page in enumerate(printed):
+            canvas.draw_rect(fitz.Rect(i * 615, 0, i * 615 + 595, 842), color=(0.6, 0.6, 0.6))
+            canvas.show_pdf_page(fitz.Rect(i * 615, 0, i * 615 + 595, 842), printed, i)
+        canvas.get_pixmap(dpi=40).save(OUT / "r3-07d-livret-imprime.png")
+
+    @step("Imprimer page 2 sur « Microsoft Print to PDF » (sortie dans un fichier)")
+    def _():
+        before = set((RECETTE / "impressions").glob("*.pdf"))
+        print_dialog("Microsoft Print to PDF")
+        edge.js("""(() => { const q = (l) => document.querySelector(`.modal [aria-label="${l}"]`);
+            q('Pages à imprimer').value = 'range'; q('Pages à imprimer').dispatchEvent(new Event('change'));
+            q('Pages choisies').value = '2'; })()""")
+        edge.js("[...document.querySelectorAll('.modal .btn-primary')][0].click()")
+        edge.wait_for("[...document.querySelectorAll('.toast')].some(t => t.textContent.includes('envoyée à « Microsoft Print to PDF »'))", timeout=60)
+        printed = new_print(before)
+        assert printed.page_count == 1, printed.page_count
+        printed[0].get_pixmap(dpi=40).save(OUT / "r3-07e-imprime-page2.png")
 
     @step("Exporter en JPG : menu ⋯, toutes les pages en 150 ppp")
     def _():

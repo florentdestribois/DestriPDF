@@ -20,6 +20,9 @@ $env:DESTRIPDF_TOKEN = 'recette'
 $env:DESTRIPDF_TEST_PFX = Join-Path $samples 'test.pfx'
 $env:DESTRIPDF_TEST_PFX_PASSWORD = 'test-destripdf'
 $env:DESTRIPDF_SETTINGS_DIR = Join-Path $samples 'reglages'
+# Impressions de la recette écrites dans des fichiers, jamais sur une imprimante.
+$env:DESTRIPDF_TEST_PRINT_DIR = Join-Path $samples 'impressions'
+New-Item -ItemType Directory -Force $env:DESTRIPDF_TEST_PRINT_DIR | Out-Null
 
 $arguments = @('--serve', '--port', "$Port", (Join-Path $samples 'dossier.pdf'))
 if ($Exe) {

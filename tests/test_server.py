@@ -175,6 +175,113 @@ def test_full_workflow(server, tmp_path):
     assert state["recent"][0]["path"] == str(target)
 
 
+def test_print_routes(server, tmp_path):
+    from destripdf.printing import PrintError
+
+    class Printing:
+        jobs, prefs, booklets = [], [], []
+        fail = None
+
+        def printers(self):
+            return ["Bureau", "Atelier"], "Atelier"
+
+        def capabilities(self, name):
+            return {"duplex": name == "Atelier", "sheets": ["a4", "a3"]}
+
+        def preferences(self, owner, name):
+            Printing.prefs.append((owner, name))
+            return True
+
+        def print_document(self, name, copies, title, pages, page_size, render, output=None):
+            if Printing.fail:
+                raise Printing.fail
+            assert render(pages[0], 0.1, 0)[1] > 0  # le rendu du document est bien transmis
+            Printing.jobs.append((name, copies, title, pages, output))
+
+        def print_booklet(self, name, copies, title, sheet, impose, render_face, upside_down_backs=False, output=None):
+            if Printing.fail:
+                raise Printing.fail
+            faces = impose(3.0)  # marge du pilote plus petite que la marge minimale du livret
+            assert render_face(faces, 0, 0.1, 0)[1] > 0
+            Printing.booklets.append((name, copies, sheet, faces.page_count, round(faces[0].rect.width), upside_down_backs, output))
+            return faces.page_count
+
+    class Dialogs:
+        def owner_handle(self):
+            return 4242
+
+    server.app.printing = Printing()
+    server.app.dialogs = Dialogs()
+    status, data = request(server, "GET", "api/printers")
+    assert status == 200 and data == {"printers": ["Bureau", "Atelier"], "default": "Atelier", "selected": "Atelier"}
+    status, data = request(server, "GET", "api/printers/capabilities?printer=Atelier")
+    assert status == 200 and data == {"printer": "Atelier", "duplex": True, "sheets": ["a4", "a3"], "flip_backs": False}
+    assert request(server, "GET", "api/printers/capabilities?printer=Inconnue")[1]["code"] == "bad_printer"
+    # sans document : rien à imprimer ni à mettre en livret
+    assert request(server, "POST", "api/print", {"printer": "Bureau"})[0] == 409
+    assert request(server, "GET", "api/print/booklet-plan")[0] == 409
+    source = tmp_path / "devis.pdf"
+    source.write_bytes(samples.quote_pdf())
+    assert request(server, "POST", "api/open", {"path": str(source)})[0] == 200
+    # garde-fous : sans en-tête applicatif ou depuis une autre origine, rien ne part
+    assert request(server, "POST", "api/print", {"printer": "Bureau"}, headers={"X-DestriPDF": "0"})[0] == 403
+    assert request(server, "POST", "api/print", {"printer": "Bureau"}, headers={"Origin": "http://evil.example"})[0] == 403
+    assert request(server, "POST", "api/print/preferences", {"printer": "Bureau"}, headers={"X-DestriPDF": "0"})[0] == 403
+    assert Printing.jobs == [] and Printing.prefs == []
+    # imprimante inconnue du poste, pages, copies ou mise en page invalides : refus
+    assert request(server, "POST", "api/print", {"printer": "\\\\autre\\imprimante"})[1]["code"] == "bad_printer"
+    assert request(server, "POST", "api/print", {"printer": "Bureau", "pages": "3-4"})[1]["code"] == "bad_page"
+    assert request(server, "POST", "api/print", {"printer": "Bureau", "pages": "a"})[1]["code"] == "bad_page"
+    assert request(server, "POST", "api/print", {"printer": "Bureau", "copies": 0})[1]["code"] == "bad_copies"
+    assert request(server, "POST", "api/print", {"printer": "Bureau", "pages": "current", "current": 5})[1]["code"] == "bad_page"
+    assert request(server, "POST", "api/print", {"printer": "Bureau", "layout": "poster"})[1]["code"] == "bad_layout"
+    assert request(server, "POST", "api/print", {"printer": "Atelier", "layout": "booklet", "sheet": "a5"})[1]["code"] == "bad_sheet"
+    assert request(server, "POST", "api/print", {"printer": "Atelier", "layout": "booklet", "binding": "haut"})[1]["code"] == "bad_binding"
+    assert Printing.jobs == [] and Printing.booklets == []
+    # préférences du pilote, ouvertes au-dessus de la fenêtre
+    status, data = request(server, "POST", "api/print/preferences", {"printer": "Bureau"})
+    assert status == 200 and data == {"changed": True} and Printing.prefs == [(4242, "Bureau")]
+    status, data = request(server, "POST", "api/print", {"printer": "Bureau", "pages": "all", "copies": 2})
+    assert status == 200 and data == {"pages": 2, "copies": 2, "layout": "normal"}
+    assert Printing.jobs[-1] == ("Bureau", 2, "devis.pdf", [0, 1], None)
+    request(server, "POST", "api/print", {"printer": "Bureau", "pages": "current", "current": 1})
+    request(server, "POST", "api/print", {"printer": "Bureau", "pages": "2, 1-1"})
+    assert [job[3] for job in Printing.jobs[1:]] == [[1], [1, 0]]
+    # plan du livret : 2 pages → 1 feuille, (blanche | 1) puis (2 | blanche) ; reliure à droite inversée
+    status, data = request(server, "GET", "api/print/booklet-plan?pages=all")
+    assert status == 200 and data == {"faces": [[None, 1], [2, None]], "sheets": 1, "pages": 2}
+    assert request(server, "GET", "api/print/booklet-plan?pages=2&binding=right")[1]["faces"] == [[1 + 1, None], [None, None]]
+    assert request(server, "GET", "api/print/booklet-plan?pages=9")[1]["code"] == "bad_page"
+    assert request(server, "GET", "api/print/booklet-plan?binding=haut")[1]["code"] == "bad_binding"
+    # livret : mis en page par DestriPDF, marge minimale gardée, versos retournés retenus par imprimante
+    status, data = request(server, "POST", "api/print", {"printer": "Atelier", "layout": "booklet", "sheet": "a4",
+                                                         "binding": "left", "flip_backs": True, "copies": 3})
+    assert status == 200 and data == {"pages": 2, "copies": 3, "layout": "booklet", "sheets": 1, "faces": 2, "sheet": "a4"}
+    assert Printing.booklets[-1] == ("Atelier", 3, "a4", 2, 842, True, None)
+    assert request(server, "GET", "api/printers/capabilities?printer=Atelier")[1]["flip_backs"] is True
+    request(server, "POST", "api/print", {"printer": "Atelier", "layout": "booklet", "sheet": "a3"})
+    assert Printing.booklets[-1][2:6] == ("a3", 2, 1191, False)
+    assert request(server, "GET", "api/printers/capabilities?printer=Atelier")[1]["flip_backs"] is False
+    # dernière imprimante utilisée proposée la fois suivante
+    request(server, "POST", "api/print", {"printer": "Bureau"})
+    assert request(server, "GET", "api/printers")[1]["selected"] == "Bureau"
+    Printing.fail = PrintError("Imprimante hors ligne.")
+    status, data = request(server, "POST", "api/print", {"printer": "Bureau"})
+    assert status == 400 and "hors ligne" in data["error"]
+    status, data = request(server, "POST", "api/print", {"printer": "Atelier", "layout": "booklet"})
+    assert status == 400 and data["code"] == "print_failed"
+    Printing.fail = None
+    # mode navigateur : ni préférences ni impression, sauf la recette qui imprime dans un fichier
+    server.app.dialogs = None
+    assert request(server, "POST", "api/print/preferences", {"printer": "Bureau"})[0] == 409
+    assert request(server, "POST", "api/print", {"printer": "Bureau"})[1]["code"] == "no_dialog"
+    server.app.print_output_dir = str(tmp_path)
+    status, data = request(server, "POST", "api/print", {"printer": "Bureau"})
+    assert status == 200 and data["output"].startswith(str(tmp_path)) and Printing.jobs[-1][4] == data["output"]
+    status, data = request(server, "POST", "api/print", {"printer": "Atelier", "layout": "booklet"})
+    assert status == 200 and Printing.booklets[-1][6] == data["output"]
+
+
 def test_export_jpeg(server, tmp_path):
     from pathlib import Path
 

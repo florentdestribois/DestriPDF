@@ -212,6 +212,25 @@ def encode_png(samples: bytes, width: int, height: int, channels: int) -> bytes:
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(bytes(raw), 2)) + chunk(b"IEND", b"")
 
 
+def render_bgra(get_page, index: int, scale: float, rotate: int = 0) -> tuple[bytes, int, int]:
+    """Page entière pour l'imprimante : pixels BGRA de haut en bas (format attendu
+    par Windows), largeur, hauteur. `get_page(index)` est appelé sous FITZ_LOCK ;
+    `rotate` tourne le rendu (270 : quart de tour vers la gauche). Taille plafonnée."""
+    with FITZ_LOCK:
+        page = get_page(index)
+        rect = page.rect
+        if rect.width * rect.height * scale * scale > MAX_EXPORT_PIXELS:
+            scale = math.sqrt(MAX_EXPORT_PIXELS / (rect.width * rect.height))
+        pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale).prerotate(rotate), alpha=False, annots=True)
+        samples, width, height = pix.samples, pix.width, pix.height
+    bgra = bytearray(width * height * 4)
+    bgra[0::4] = samples[2::3]
+    bgra[1::4] = samples[1::3]
+    bgra[2::4] = samples[0::3]
+    bgra[3::4] = b"\xff" * (width * height)
+    return bytes(bgra), width, height
+
+
 def has_signatures(doc: fitz.Document) -> bool:
     """Le document porte-t-il une signature remplie ?
 
@@ -635,6 +654,26 @@ class PdfSession:
             pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False, annots=True)
             pix.set_dpi(effective, effective)  # taille d'impression juste dans Word, Paint…
             return pix.tobytes("jpg", jpg_quality=quality), effective
+
+    def page_size(self, index: int) -> tuple[float, float]:
+        """Taille affichée de la page en points (rotation comprise)."""
+        with FITZ_LOCK:
+            rect = self.page(index).rect
+            return rect.width, rect.height
+
+    def render_print(self, index: int, scale: float, rotate: int = 0) -> tuple[bytes, int, int]:
+        """Page entière pour l'imprimante, telle qu'affichée : pixels BGRA de haut en
+        bas (format attendu par Windows), largeur, hauteur. Taille plafonnée."""
+        return render_bgra(self.page, index, scale, rotate)
+
+    def impose_booklet(self, pages: list[int], sheet: tuple[float, float], margin: float, binding: str) -> fitz.Document:
+        """Faces du livret (voir `booklet.impose`), sans toucher au document ouvert."""
+        from .booklet import impose
+
+        with FITZ_LOCK:
+            for index in pages:
+                self.page(index)  # contrôle des index avant tout accès
+            return impose(self.doc, pages, sheet, margin, binding)
 
     # -- texte --
 

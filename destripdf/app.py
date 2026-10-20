@@ -79,6 +79,15 @@ class WindowDialogs:
     def save_jpeg(self, directory: str, filename: str) -> str | None:
         return self._save(directory, filename, ("Images JPEG (*.jpg;*.jpeg)",))
 
+    def owner_handle(self) -> int:
+        """Fenêtre propriétaire des fenêtres natives (préférences du pilote d'imprimante)."""
+        from System import Func, Type
+
+        form = self.window.native
+        handle = []
+        form.Invoke(Func[Type](lambda: handle.append(form.Handle.ToInt64())))
+        return handle[0] if handle else 0
+
     def _save(self, directory: str, filename: str, file_types: tuple[str, ...]) -> str | None:
         import webview
 
@@ -150,6 +159,9 @@ def main(argv: list[str] | None = None) -> int:
     settings = Settings(Path(settings_dir) if settings_dir else None)
     state = AppState(settings, store_factory=_test_store_factory() if args.serve else None, mode="browser" if args.serve else "window")
     state.started_at = started
+    if args.serve:
+        # Recette : impressions écrites dans des fichiers, jamais sur une vraie imprimante.
+        state.print_output_dir = os.environ.get("DESTRIPDF_TEST_PRINT_DIR") or None
     # Jeton fixe : recette uniquement (variable d'environnement de développement).
     server = LocalServer(state, port=args.port, token=os.environ.get("DESTRIPDF_TOKEN") or None)
     server.start()
