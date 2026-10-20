@@ -495,8 +495,15 @@ afin de garantir que ça marche ».
   « DestriPDF 1.3.3 » ; lancement sans droits : fenêtre en 0,56 s, interface
   en 0,81 s. Florent a rouvert son document dans la 1.3.3 depuis l'Explorateur.
 - [x] Retour de Florent après l'installation de la 1.3.3 : « ok commit push ».
-  Commit et push sur `main` (20 octobre) ; pas de release demandée : `v1.3.0`
-  reste la dernière publiée.
+  Commit `1016d15` poussé sur `main` (20 octobre).
+- [x] Release `v1.3.3` publiée à la demande de Florent par
+  `scripts\release.ps1 -Publish` :
+  https://github.com/florentdestribois/DestriPDF/releases/tag/v1.3.3, étiquette
+  sur `1016d15` ; `build.ps1` : 120 tests, fumée de l'exécutable figé 20/20,
+  installateur `DestriPDF-1.3.3-installation.exe` (36 174 358 octets) ; SHA-256
+  `3912658C4DF9936BBA8542107D7D037873734E5F3E6796B82E3C7ADC41CF2F22` identique
+  sur GitHub. Le poste garde l'installation 1.3.3 du 19 octobre (même code,
+  construite avant ce suivi).
 
 ### Reste à faire / limites
 
