@@ -9,6 +9,9 @@ une fenêtre pywebview (Edge WebView2). Voir `README.md` pour l'architecture.
 - `plan.md` (objectif, périmètre, architecture, critères) et `task.md`
   (avancement, validations, suite) font autorité. Les lire avant toute
   modification de code ; les mettre à jour après, avant d'annoncer la fin.
+- Garder `task.md` court : entrées de quelques lignes ; les versions publiées
+  et entièrement cochées vont dans `docs/archives/`. Ne jamais lire
+  `docs/archives/` en entier : chercher.
 - Dépôt : `https://github.com/florentdestribois/DestriPDF` (privé, branche
   `main`). Ne créer ni branche, ni commit, ni push, ni tag, ni publication sans
   demande explicite.
