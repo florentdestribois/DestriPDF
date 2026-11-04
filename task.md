@@ -663,6 +663,32 @@ compression des pdfs ».
   (recette).
 - [x] Tests : 146 ; recette Edge : 44 parcours sur 44 après corrections.
 
+### Publication et installation — 4 novembre, à la demande de Florent
+
+Demande : « commit push et release puis instal le ».
+
+- [x] Commit `adae98e` (avec le papier A4/A3 et le recto verso de la 1.4.0,
+  jamais commités) poussé sur `main`. GitHub en incident (« Pull Requests, Git
+  Operations and Issues ») : premier push refusé (« Internal Server Error »),
+  accepté au second.
+- [x] `scripts\release.ps1 -Publish` : `build.ps1` complet — 146 tests,
+  exécutable, fumée de l'exécutable figé 26/26 (assemblage et compression
+  compris), installateur `DestriPDF-1.5.0-installation.exe` (36 703 168
+  octets), SHA-256 `6A0D92ED34F7385CF25C42A7C0474968B8A5AC23C2AB3E6065EB254B
+  53539FAA`. Étiquette `v1.5.0` refusée au push (500), poussée au second essai.
+- [x] Release `v1.5.0` publiée :
+  https://github.com/florentdestribois/DestriPDF/releases/tag/v1.5.0, étiquette
+  sur `adae98e`, installateur joint, SHA-256 identique sur GitHub. Création
+  d'abord refusée par GitHub pendant l'incident (500, 404 à l'envoi de
+  l'installateur, 502 ; aucun brouillon laissé), puis faite par un essai
+  automatique avec les notes de `release.ps1` (dont l'arrêt au push de
+  l'étiquette a laissé la fin de la publication à faire à la main).
+- [x] Installée sur le poste (1.4.0 → 1.5.0, installation silencieuse,
+  autorisation Windows acceptée) : 760 fichiers identiques au paquet, entrée
+  « DestriPDF » 1.5.0. Les deux fenêtres ouvertes (sans modification) ont été
+  fermées puis rouvertes sur leurs documents ; lancement sans droits : fenêtre
+  en 0,48 s, interface en 1,0 s, première page en 1,2 s.
+
 ### Reste à faire / limites
 
 - [ ] Imprimante sans recto verso automatique : faces imprimées à la suite, pas
