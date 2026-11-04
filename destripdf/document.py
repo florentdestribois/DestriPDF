@@ -34,6 +34,16 @@ HISTORY_BUDGET = 400 * 1024 * 1024
 MAX_RENDER_PIXELS = 40_000_000  # garde-fou mémoire pour un zoom extrême
 MAX_EXPORT_PIXELS = 50_000_000  # export JPG : une page A4 à 300 ppp en compte 8,7 millions
 
+# Compression : (seuil, résolution visée en ppp, qualité JPEG, images sans perte passées en JPEG).
+# Seules les images au-delà du seuil sont rééchantillonnées (bicubique, résolution exacte) ;
+# une image n'est remplacée que si elle devient plus petite. Images en noir et blanc :
+# recompressées sans perte (CCITT G4), jamais rééchantillonnées.
+COMPRESSION_LEVELS = {
+    "print": (450, 300, 85, False),
+    "screen": (225, 150, 75, True),
+    "minimum": (150, 100, 55, True),
+}
+
 ANNOT_LABELS = {
     "Text": "Note",
     "FreeText": "Texte",
@@ -471,18 +481,22 @@ def _alignment_hint(seg: _ServerLine, others: list[_ServerLine]) -> str:
 class PdfSession:
     """Un document ouvert, ses états successifs et ses opérations."""
 
-    def __init__(self, data: bytes, *, path: str | None = None, name: str | None = None, password: str | None = None):
+    def __init__(self, data: bytes, *, path: str | None = None, name: str | None = None, password: str | None = None,
+                 new_document: bool = False):
         self.id = uuid.uuid4().hex
         self.path = str(path) if path else None
         self.name = name or (Path(path).name if path else "Document.pdf")
         self.password = password
+        # Dossier proposé à l'enregistrement d'un document sans fichier (PDF assemblé).
+        self.origin_dir: str | None = None
         with FITZ_LOCK:
             self.doc = self._open(data)
             self.signed_original = has_signatures(self.doc)
             self.encrypted = bool(self.doc.metadata.get("encryption")) if self.doc.metadata else False
             self.original = data
             self.history = History(data)
-            self.saved_state = self.history.state_id
+            # Document créé par DestriPDF (assemblage) : à enregistrer, jamais perdu sans question.
+            self.saved_state = None if new_document else self.history.state_id
             self.version = 1
             self.page_versions = [1] * self.doc.page_count
             self._heavy_cache: dict[tuple[int, int], bool] = {}
@@ -1180,26 +1194,100 @@ class PdfSession:
         self._mutate("Déplacement de page", apply, structure=True)
         return self.summary()
 
+    def move_pages(self, pages: list[int], before: int) -> tuple[dict, dict]:
+        """Déplace les pages choisies, dans l'ordre du document, juste avant la page
+        `before` (numérotation actuelle ; le nombre de pages : à la fin).
+
+        Une seule étape d'annulation. Par `move_page` successifs : `select()` de MuPDF
+        retire le formulaire (/AcroForm) du document. Renvoie l'état et la place des
+        pages déplacées ({"start", "count"}), ou rien n'est fait si l'ordre ne change pas.
+        """
+        with FITZ_LOCK:
+            count = self.doc.page_count
+            chosen = sorted(set(int(p) for p in pages))
+            before = int(before)
+            if not chosen or chosen[0] < 0 or chosen[-1] >= count or not 0 <= before <= count:
+                raise DocumentError("Déplacement impossible.", "bad_page")
+            moving = set(chosen)
+            rest = [i for i in range(count) if i not in moving]
+            insert_at = sum(1 for i in rest if i < before)
+            order = rest[:insert_at] + chosen + rest[insert_at:]
+            moved = {"start": insert_at, "count": len(chosen)}
+            if order == list(range(count)):
+                return self.summary(), moved  # déjà à leur place : aucune étape d'annulation
+            anchor = rest[insert_at] if insert_at < len(rest) else None
+
+            def apply():
+                xrefs = [self.doc[i].xref for i in range(count)]
+                current = list(range(count))  # position -> numéro d'origine
+                for page in chosen:
+                    source = current.index(page)
+                    target = current.index(anchor) if anchor is not None else count
+                    if source + 1 != target:
+                        # move_page insère avant la page `to` (numérotation avant retrait) ; -1 : à la fin
+                        self.doc.move_page(source, target if target < count else -1)
+                        current.insert(target - 1 if source < target else target, current.pop(source))
+                # Contrôle : chaque page à sa place, sinon retour à l'état d'avant.
+                if [self.doc[i].xref for i in range(count)] != [xrefs[i] for i in order]:
+                    raise DocumentError("Déplacement des pages non vérifié : rien n'a été modifié.", "move_failed")
+
+            self._mutate("Déplacement de pages" if len(chosen) > 1 else "Déplacement de page", apply, structure=True)
+            return self.summary(), moved
+
     def insert_pdf(self, data: bytes, at: int | None = None, password: str | None = None) -> dict:
         """Insère un PDF avant la page `at` (en fin de document si `at` est absent)."""
-        with FITZ_LOCK:  # MuPDF n'est pas sûr entre fils d'exécution, y compris pour la source
-            try:
-                source = fitz.open("pdf", data)
-            except Exception as exc:  # noqa: BLE001
-                raise DocumentError("Le fichier à insérer n'est pas un PDF lisible.", "not_pdf") from exc
-            try:
-                if source.needs_pass and not (password and source.authenticate(password)):
-                    raise DocumentError("Le PDF à insérer est protégé par un mot de passe.", "password")
+        return self.insert_pdfs([(None, data)], at, password=password)[0]
 
+    def insert_pdfs(self, sources: list[tuple[str | None, bytes]], at: int | None = None, *,
+                    password: str | None = None) -> tuple[dict, dict]:
+        """Insère des PDF à la suite, avant la page `at` (à la fin si `at` est absent),
+        en une seule étape d'annulation. Chaque source est contrôlée avant toute
+        modification. Renvoie l'état et {"start", "count", "files", "signed"}."""
+        info: dict = {}
+        with FITZ_LOCK:  # MuPDF n'est pas sûr entre fils d'exécution, y compris pour les sources
+            opened = _open_sources(sources, password)
+            try:
                 def apply():
                     count = self.doc.page_count
                     start = count if at is None else max(0, min(int(at), count))
-                    self.doc.insert_pdf(source, start_at=start)
+                    position = start
+                    for source in opened:
+                        _insert_with_extras(self.doc, source.doc, position)
+                        position += source.doc.page_count
+                    info.update(start=start, count=position - start)
 
-                self._mutate("Insertion de pages", apply, structure=True)
+                label = "Insertion de pages" if len(opened) == 1 else f"Insertion de {len(opened)} PDF"
+                self._mutate(label, apply, structure=True)
+                info["files"] = len(opened)
+                info["signed"] = [source.name or "PDF ajouté" for source in opened if source.signed]
             finally:
-                source.close()
-        return self.summary()
+                for source in opened:
+                    source.doc.close()
+        return self.summary(), info
+
+    def compressed_bytes(self, level: str) -> bytes:
+        """Copie compressée du document dans son état courant (images recompressées,
+        objets dédoublonnés et regroupés), sans toucher au document ouvert. Refusée pour
+        un document signé : la réécriture invaliderait ses signatures."""
+        if level not in COMPRESSION_LEVELS:
+            raise DocumentError("Niveau de compression inconnu.", "bad_level")
+        with FITZ_LOCK:
+            if self.signed_original:
+                raise DocumentError(
+                    "Ce document est signé : le compresser invaliderait ses signatures. "
+                    "Compressez-le avant de le signer.",
+                    "signed",
+                )
+            copy = fitz.open("pdf", self.history.current)
+            try:
+                if copy.needs_pass:
+                    copy.authenticate(self.password or "")
+                copy.rewrite_images(options=_rewriter_options(*COMPRESSION_LEVELS[level]))
+                _fix_jpeg_colorspaces(copy)
+                return copy.tobytes(garbage=4, deflate=True, deflate_images=True, deflate_fonts=True,
+                                    use_objstms=1, encryption=fitz.PDF_ENCRYPT_KEEP)
+            finally:
+                copy.close()
 
     @property
     def page_count(self) -> int:
@@ -1316,6 +1404,207 @@ def _put_raw_stream(doc: fitz.Document, xref: int, raw: bytes) -> None:
     obj = fitz.mupdf.pdf_new_indirect(pdf, xref, 0)
     buf = fitz.JM_BufferFromBytes(raw)
     fitz.mupdf.pdf_update_stream(pdf, obj, buf, 1)
+
+
+# --- Assemblage et compression -------------------------------------------------
+
+
+@dataclass
+class _Source:
+    name: str | None
+    doc: fitz.Document
+    signed: bool  # signé à l'origine : signatures figées en image dans la copie
+
+
+def _open_sources(sources: list[tuple[str | None, bytes]], password: str | None = None) -> list[_Source]:
+    """PDF à insérer ou à assembler, tous contrôlés avant la moindre modification
+    (lisible, sans mot de passe, au moins une page). Appelé sous FITZ_LOCK.
+
+    Une source signée a ses champs figés (`bake`) : sa signature reste visible
+    comme une image mais ne figure plus comme signature, invalide hors de son
+    fichier, dans le document assemblé."""
+    if not sources:
+        raise DocumentError("Aucun PDF à ajouter.", "empty")
+    opened: list[_Source] = []
+    try:
+        for name, data in sources:
+            label = f"« {name} »" if name else ""
+            try:
+                doc = fitz.open("pdf", data)
+            except Exception as exc:  # noqa: BLE001
+                raise DocumentError(f"{label} n'est pas un PDF lisible." if label else "Le fichier à insérer n'est pas un PDF lisible.",
+                                    "not_pdf") from exc
+            source = _Source(name, doc, False)
+            opened.append(source)
+            if doc.needs_pass and not (password and doc.authenticate(password)):
+                raise DocumentError(f"{label} est protégé par un mot de passe : il ne peut pas être assemblé." if label
+                                    else "Le PDF à insérer est protégé par un mot de passe.", "password")
+            if doc.page_count == 0:
+                raise DocumentError(f"{label} ne contient aucune page." if label else "Le PDF à insérer ne contient aucune page.", "empty")
+            if has_signatures(doc):
+                source.signed = True
+                try:
+                    doc.bake(annots=False, widgets=True)
+                except Exception as exc:  # noqa: BLE001
+                    raise DocumentError(f"{label or 'Ce PDF'} est signé et ses champs n'ont pas pu être figés : il ne peut pas être assemblé.",
+                                        "signed_source") from exc
+    except Exception:
+        for source in opened:
+            source.doc.close()
+        raise
+    return opened
+
+
+def _insert_with_extras(dest: fitz.Document, source: fitz.Document, position: int) -> None:
+    """`insert_pdf` puis ce qu'il ne reprend pas du document source : les calques
+    (contenu facultatif) avec leur état par défaut — un calque masqué le reste au
+    lieu d'apparaître — et les pièces jointes du document."""
+    gid = source._graft_id
+    try:
+        dest.insert_pdf(source, start_at=position, final=0)  # table des objets copiés gardée
+        gmap = dest.Graftmaps.get(gid)
+        ocgs = source.get_ocgs()
+        if ocgs and gmap is not None:
+            src_pdf = fitz._as_pdf_document(source)
+            mapped = {xref: fitz.mupdf.pdf_to_num(fitz.mupdf.pdf_graft_mapped_object(gmap.this, fitz.mupdf.pdf_new_indirect(src_pdf, xref, 0)))
+                      for xref in ocgs}
+            _extend_oc_properties(dest, mapped.values(),
+                                  on=[mapped[x] for x, info in ocgs.items() if info.get("on")],
+                                  off=[mapped[x] for x, info in ocgs.items() if not info.get("on")])
+        if source.embfile_count():
+            existing = set(dest.embfile_names())
+            for name in source.embfile_names():
+                info = source.embfile_info(name)
+                unique, n = name, 2
+                while unique in existing:
+                    unique, n = f"{name} ({n})", n + 1
+                existing.add(unique)
+                dest.embfile_add(unique, source.embfile_get(name), filename=info.get("filename") or name,
+                                 ufilename=info.get("ufilename") or name, desc=info.get("desc") or "")
+    finally:
+        dest.Graftmaps[gid] = None
+
+
+def _extend_oc_properties(doc: fitz.Document, ocgs, *, on, off) -> None:
+    """Ajoute des calques à /OCProperties (liste, ordre d'affichage, état par défaut)."""
+    cat = doc.pdf_catalog()
+    kind, value = doc.xref_get_key(cat, "OCProperties")
+    if kind == "null":
+        doc.xref_set_key(cat, "OCProperties", "<</OCGs[]/D<</Order[]>>>>")
+        kind, value = doc.xref_get_key(cat, "OCProperties")
+    target, prefix = (int(value.split()[0]), "") if kind == "xref" else (cat, "OCProperties/")
+
+    def extend(key: str, refs) -> None:
+        refs = [int(r) for r in refs]
+        if not refs:
+            return
+        k, v = doc.xref_get_key(target, prefix + key)
+        current = [int(n) for n in re.findall(r"(\d+)\s+0\s+R", v)] if k == "array" else []
+        merged = current + [r for r in refs if r not in current]
+        doc.xref_set_key(target, prefix + key, "[" + " ".join(f"{r} 0 R" for r in merged) + "]")
+
+    extend("OCGs", ocgs)
+    extend("D/Order", ocgs)
+    extend("D/ON", on)  # explicite : vrai aussi si le document hôte part de /BaseState /OFF
+    extend("D/OFF", off)
+
+
+def assemble_pdfs(sources: list[tuple[str | None, bytes]]) -> tuple[bytes, list[str]]:
+    """Nouveau PDF fait des sources mises bout à bout, dans l'ordre donné.
+
+    Comme Acrobat, chaque fichier reçoit un signet à son nom, ses propres signets
+    rangés dessous. Renvoie le PDF et les noms des sources signées (leurs signatures
+    sont figées en image : elles ne valent plus dans le document assemblé).
+    """
+    with FITZ_LOCK:
+        opened = _open_sources(sources)
+        out = fitz.open()
+        try:
+            toc = []
+            for number, source in enumerate(opened, 1):
+                start = out.page_count
+                _insert_with_extras(out, source.doc, start)
+                entries = [[level, title, start + page if page > 0 else start + 1]
+                           for level, title, page in source.doc.get_toc(simple=True)]
+                if len(opened) == 1:
+                    toc.extend(entries)
+                else:
+                    toc.append([1, Path(source.name or "").stem or f"Document {number}", start + 1])
+                    toc.extend([level + 1, title, page] for level, title, page in entries)
+            if toc:
+                try:
+                    out.set_toc(toc)
+                except Exception:  # noqa: BLE001 - signets illisibles : document sans signets
+                    pass
+            signed = [source.name or "PDF ajouté" for source in opened if source.signed]
+            return out.tobytes(garbage=3, deflate=True), signed
+        finally:
+            out.close()
+            for source in opened:
+                source.doc.close()
+
+
+def _jpeg_components(raw: bytes) -> int | None:
+    """Nombre de composantes d'un JPEG (en-tête SOF), None si illisible."""
+    if raw[:2] != b"\xff\xd8":
+        return None
+    i = 2
+    while i + 4 <= len(raw):
+        if raw[i] != 0xFF:
+            return None
+        marker = raw[i + 1]
+        if marker == 0xFF:  # octet de remplissage
+            i += 1
+            continue
+        if marker == 0x01 or 0xD0 <= marker <= 0xD8:  # marqueurs sans longueur
+            i += 2
+            continue
+        if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+            return raw[i + 9] if i + 9 < len(raw) else None
+        i += 2 + int.from_bytes(raw[i + 2:i + 4], "big")
+    return None
+
+
+def _fix_jpeg_colorspaces(doc: fitz.Document) -> None:
+    """MuPDF 1.29 recompresse une image CMJN à profil ICC en JPEG RVB mais lui laisse
+    son espace CMJN : couleurs fausses. Après la recompression, une image JPEG dont
+    le profil ICC n'a pas le nombre de composantes du JPEG prend l'espace de
+    couleur de ce JPEG (pixels convertis par MuPDF avec le profil)."""
+    device = {1: "/DeviceGray", 3: "/DeviceRGB"}
+    for xref in range(1, doc.xref_length()):
+        try:
+            if doc.xref_get_key(xref, "Subtype")[1] != "/Image" or "DCTDecode" not in doc.xref_get_key(xref, "Filter")[1]:
+                continue
+            kind, value = doc.xref_get_key(xref, "ColorSpace")
+            text = doc.xref_object(int(value.split()[0]), compressed=True) if kind == "xref" else value
+            match = re.match(r"\s*\[\s*/ICCBased\s+(\d+)\s+0\s+R\s*\]", text)
+            if not match:
+                continue
+            n_kind, n_value = doc.xref_get_key(int(match.group(1)), "N")
+            components = _jpeg_components(doc.xref_stream_raw(xref))
+        except Exception:  # noqa: BLE001 - objet illisible : laissé tel quel
+            continue
+        if n_kind == "int" and components in device and components != int(n_value):
+            doc.xref_set_key(xref, "ColorSpace", device[components])
+            if doc.xref_get_key(xref, "Decode")[0] != "null":
+                doc.xref_set_key(xref, "Decode", "null")  # tableau prévu pour l'ancien nombre de composantes
+
+
+def _rewriter_options(threshold: int, target: int, quality: int, lossless_jpeg: bool):
+    """Réglages de `pdf_rewrite_images` pour un niveau de COMPRESSION_LEVELS."""
+    mupdf = fitz.mupdf
+    opts = mupdf.PdfImageRewriterOptions()
+    for kind in ("color_lossy", "color_lossless", "gray_lossy", "gray_lossless"):
+        keep_lossless = kind.endswith("lossless") and not lossless_jpeg
+        setattr(opts, f"{kind}_image_recompress_method", mupdf.FZ_RECOMPRESS_LOSSLESS if keep_lossless else mupdf.FZ_RECOMPRESS_JPEG)
+        setattr(opts, f"{kind}_image_recompress_quality", str(quality))
+        # Bicubique : résolution visée exacte (la moyenne de MuPDF divise par puissances de 2).
+        setattr(opts, f"{kind}_image_subsample_method", mupdf.FZ_SUBSAMPLE_BICUBIC)
+        setattr(opts, f"{kind}_image_subsample_threshold", threshold)
+        setattr(opts, f"{kind}_image_subsample_to", target)
+    opts.bitonal_image_recompress_method = mupdf.FZ_RECOMPRESS_FAX
+    opts.recompress_when = mupdf.FZ_RECOMPRESS_WHEN_SMALLER
+    return opts
 
 
 def _pdf_date(value: str) -> str:

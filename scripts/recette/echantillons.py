@@ -18,6 +18,13 @@ root.mkdir(parents=True, exist_ok=True)
 (root / "devis.pdf").write_bytes(samples.quote_pdf())
 (root / "formulaire.pdf").write_bytes(samples.form_pdf())
 (root / "plan.pdf").write_bytes(samples.rotated_pdf())
+# Assemblage (dossier de candidature) et compression (photo de chantier à 400 ppp)
+lot = root / "lot"
+lot.mkdir(exist_ok=True)
+(lot / "1 - lettre.pdf").write_bytes(samples.other_pdf(1, "Lettre"))
+(lot / "2 - memoire.pdf").write_bytes(samples.other_pdf(3, "Mémoire"))
+(lot / "10 - annexe.pdf").write_bytes(samples.other_pdf(2, "Annexe"))
+(root / "chantier.pdf").write_bytes(samples.photo_pdf(400))
 
 # Document de 12 pages avec un vrai paragraphe et des signets
 doc = fitz.open(stream=samples.quote_pdf(), filetype="pdf")

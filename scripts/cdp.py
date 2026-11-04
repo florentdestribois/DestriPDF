@@ -48,6 +48,7 @@ class Edge:
         self.ws = websocket.create_connection(targets[0]["webSocketDebuggerUrl"], timeout=60, suppress_origin=True)
         self._id = 0
         self.console: list[str] = []
+        self.drag_data = None  # glisser intercepté (Input.setInterceptDrags)
         self.call("Runtime.enable")
         self.call("Page.enable")
         self.call("Log.enable")
@@ -80,6 +81,8 @@ class Edge:
             entry = msg["params"]["entry"]
             if entry.get("level") in ("error", "warning"):
                 self.console.append(f"{entry['level']}: {entry.get('text')} {entry.get('url', '')}")
+        elif method == "Input.dragIntercepted":
+            self.drag_data = msg["params"]["data"]
 
     def pump(self, seconds: float = 0.2):
         """Laisse passer les événements (console, exceptions) pendant un court instant."""
@@ -166,6 +169,44 @@ class Edge:
                 self.mouse("mouseMoved", ax + (bx - ax) * t, ay + (by - ay) * t, buttons=1)
         xn, yn = points[-1]
         self.mouse("mouseReleased", xn, yn, click_count=1)
+
+    # -- glisser-déposer HTML5 réel (dragstart de la page, puis dépôt par le protocole) --
+
+    def html_drag(self, start, end, hover=None):
+        """Saisit l'élément sous `start` à la souris et le dépose en `end`. `hover` est
+        appelé pendant le survol, avant le dépôt (capture de l'indicateur)."""
+        self.call("Input.setInterceptDrags", enabled=True)
+        self.drag_data = None
+        x0, y0 = start
+        try:
+            self.mouse("mouseMoved", x0, y0)
+            self.mouse("mousePressed", x0, y0, buttons=1, click_count=1)
+            for k in range(1, 8):
+                self.mouse("mouseMoved", x0 + k * 3, y0 + k * 3, buttons=1)
+                if self.drag_data is not None:
+                    break
+            deadline = time.time() + 3
+            while self.drag_data is None and time.time() < deadline:
+                self.pump(0.1)
+            if self.drag_data is None:
+                raise RuntimeError("glisser non démarré par la page")
+            self.drop(self.drag_data, end, hover)
+        finally:
+            self.call("Input.setInterceptDrags", enabled=False)
+            self.mouse("mouseReleased", end[0], end[1], click_count=1)
+
+    def drop_files(self, files, end, hover=None):
+        """Fichiers déposés depuis l'Explorateur en `end` (contenu lu par la page)."""
+        self.drop({"items": [], "files": [str(f) for f in files], "dragOperationsMask": 1}, end, hover)
+
+    def drop(self, data, end, hover=None):
+        x, y = end
+        self.call("Input.dispatchDragEvent", type="dragEnter", x=x, y=y, data=data)
+        for _ in range(3):
+            self.call("Input.dispatchDragEvent", type="dragOver", x=x, y=y, data=data)
+        if hover:
+            hover()
+        self.call("Input.dispatchDragEvent", type="drop", x=x, y=y, data=data)
 
     def type(self, text: str):
         self.call("Input.insertText", text=text)

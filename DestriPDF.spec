@@ -2,9 +2,21 @@
 # Exécutable DestriPDF en mode dossier : aucun dépaquetage au lancement, démarrage rapide.
 # Construction : .venv\Scripts\python.exe -m PyInstaller DestriPDF.spec --noconfirm
 
+import os
+import ssl
+
 from PyInstaller.utils.hooks import collect_submodules
 
 ROOT = SPECPATH
+
+datas = [(f"{ROOT}\\destripdf\\static", "destripdf\\static")]
+# Le runtime Python du poste (Codex, depuis le 25 octobre 2026) a un ssl.py qui
+# charge ce fichier, voisin de ssl.py, à chaque contexte SSL : sans lui, l'import
+# d'aiohttp échoue dans l'exécutable figé (FileNotFoundError) et la signature avec.
+# ssl.py figé : dossier `_internal`.
+_rejected_cas = os.path.join(os.path.dirname(ssl.__file__), "codex-rejected-cas.pem")
+if os.path.exists(_rejected_cas):
+    datas.append((_rejected_cas, "."))
 
 hiddenimports = (
     collect_submodules("destripdf")
@@ -26,7 +38,7 @@ a = Analysis(
     [f"{ROOT}\\scripts\\destripdf_launcher.py"],
     pathex=[ROOT],
     binaries=[],
-    datas=[(f"{ROOT}\\destripdf\\static", "destripdf\\static")],
+    datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],

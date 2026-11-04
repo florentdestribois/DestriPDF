@@ -8,6 +8,7 @@ navigateur l'envoie, une origine identique. Aucune ressource externe.
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import mimetypes
@@ -16,6 +17,7 @@ import re
 import secrets
 import threading
 import time
+import unicodedata
 from collections import OrderedDict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -31,6 +33,7 @@ log = logging.getLogger("destripdf")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 MAX_JSON = 4 * 1024 * 1024
 MAX_UPLOAD = 1024 * 1024 * 1024
+MAX_FILES = 100  # PDF ajoutés ou assemblés en une fois
 RENDER_CACHE_BYTES = 160 * 1024 * 1024
 API_HEADER = "X-DestriPDF"
 
@@ -44,11 +47,33 @@ CSP = (
 class Dialogs(Protocol):
     def open_pdf(self, directory: str) -> str | None: ...
 
+    def open_pdfs(self, directory: str) -> list[str]: ...
+
     def save_pdf(self, directory: str, filename: str) -> str | None: ...
 
     def save_jpeg(self, directory: str, filename: str) -> str | None: ...
 
     def owner_handle(self) -> int: ...
+
+
+def natural_key(path: str) -> list:
+    """Tri de secours : sans casse ni accents, nombres dans l'ordre numérique."""
+    name = "".join(c for c in unicodedata.normalize("NFKD", Path(path).name) if not unicodedata.combining(c))
+    return [int(part) if part.isdigit() else part.casefold() for part in re.split(r"(\d+)", name)]
+
+
+def sort_like_explorer(paths: list[str]) -> list[str]:
+    """Fichiers dans l'ordre de l'Explorateur (StrCmpLogicalW de Windows : « Électricité »
+    près de « Devis », « 2 - plan » avant « 10 - annexe »)."""
+    try:
+        import ctypes
+
+        compare = ctypes.windll.shlwapi.StrCmpLogicalW
+        compare.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
+        compare.restype = ctypes.c_int
+    except (AttributeError, OSError):
+        return sorted(paths, key=natural_key)
+    return sorted(paths, key=functools.cmp_to_key(lambda a, b: compare(Path(a).name, Path(b).name)))
 
 
 class ApiError(Exception):
@@ -118,6 +143,8 @@ class AppState:
         self.pending: dict | None = None  # PDF protégé en attente du mot de passe
         self.render_cache = RenderCache()
         self.validation: dict = {"key": None, "running": False, "reports": None, "error": None}
+        # Copies compressées de l'état courant du document, par niveau (estimation puis enregistrement).
+        self.compressed: dict = {"key": None, "levels": {}, "before": None}
         self.on_title: Callable[[str], None] | None = None
         self.on_quit: Callable[[], None] | None = None
         self.force_quit = False
@@ -148,11 +175,13 @@ class AppState:
         except Exception:  # noqa: BLE001 - la fenêtre peut être en cours de fermeture
             log.debug("titre non mis à jour", exc_info=True)
 
-    def open_bytes(self, data: bytes, *, path: str | None, name: str | None, password: str | None = None) -> dict:
+    def open_bytes(self, data: bytes, *, path: str | None, name: str | None, password: str | None = None,
+                   new_document: bool = False, origin_dir: str | None = None) -> dict:
         from .document import DocumentError, PdfSession
 
         try:
-            session = PdfSession(data, path=path, name=name, password=password)
+            session = PdfSession(data, path=path, name=name, password=password, new_document=new_document)
+            session.origin_dir = origin_dir
         except DocumentError as err:
             if err.code == "password":
                 self.pending = {"data": data, "path": path, "name": name or (Path(path).name if path else "Document.pdf")}
@@ -166,6 +195,7 @@ class AppState:
             self.pending = None
             self.load_error = None
             self.render_cache.clear()
+            self.compressed = {"key": None, "levels": {}, "before": None}
         if old is not None:
             old.close()
         if path:
@@ -186,6 +216,16 @@ class AppState:
             raise ApiError("Ce fichier n'existe plus.", "not_found")
         data = read_file(path)
         return self.open_bytes(data, path=path, name=Path(path).name, password=password)
+
+    def open_assembly(self, sources: list[tuple[str | None, bytes]], *, origin_dir: str | None = None) -> tuple[dict, list[str]]:
+        """Nouveau document fait des PDF donnés, sans fichier : « Enregistrer » demande où
+        l'écrire, jamais à la place d'une des sources."""
+        from .document import assemble_pdfs
+
+        data, signed = assemble_pdfs(sources)
+        stem = Path(sources[0][0] or "").stem or "Document"
+        summary = self.open_bytes(data, path=None, name=f"{stem} - assemblé.pdf", new_document=True, origin_dir=origin_dir)
+        return summary, signed
 
     def open_in_background(self, path: str) -> None:
         self.idle.clear()
@@ -216,6 +256,7 @@ class AppState:
             old, self.session = self.session, None
             self.render_cache.clear()
             self.validation = {"key": None, "running": False, "reports": None, "error": None}
+            self.compressed = {"key": None, "levels": {}, "before": None}
         if old is not None:
             old.close()
         self.refresh_title()
@@ -644,6 +685,15 @@ class Handler(BaseHTTPRequestHandler):
         body = self._json_body()
         self._done(self.app.require_session().move_page(int(body["from"]), int(body["to"])))
 
+    def api_pages_move_many(self, query):
+        """Pages choisies déplacées ensemble avant la page `before` (le nombre de pages : à la fin)."""
+        body = self._json_body()
+        pages = body.get("pages")
+        if not isinstance(pages, list) or not pages or len(pages) > 100_000:
+            raise ApiError("Aucune page sélectionnée.", "empty")
+        summary, moved = self.app.require_session().move_pages([int(p) for p in pages], int(body["before"]))
+        self._done(summary, moved=moved)
+
     def _printing(self):
         if self.app.printing is None:
             from .printing import WindowsPrinting
@@ -668,7 +718,8 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"printers": names, "default": default, "selected": last if last in names else default})
 
     def api_printer_capabilities(self, query):
-        """Ce que le pilote permet pour le livret : formats ordinaires, recto verso bord court."""
+        """Ce que le pilote permet : formats ordinaires, recto verso ; papier et recto
+        verso en cours, proposés par défaut dans la boîte Imprimer."""
         from .printing import PrintError
 
         name = self._printer_name({"printer": (query.get("printer") or [""])[0]})
@@ -731,7 +782,7 @@ class Handler(BaseHTTPRequestHandler):
         page par DestriPDF (jamais la fonction Livret de l'imprimante)."""
         from .booklet import MIN_MARGIN, SHEETS
         from .document import FITZ_LOCK, render_bgra
-        from .printing import MAX_COPIES, PrintError
+        from .printing import DUPLEX_MODES, MAX_COPIES, PrintError
 
         body = self._json_body()
         session = self.app.require_session()
@@ -782,36 +833,186 @@ class Handler(BaseHTTPRequestHandler):
             self.app.settings.remember_booklet_flip(name, flip)
             result.update({"sheets": faces // 2, "faces": faces, "sheet": sheet})
         else:
+            # Papier et recto verso de la boîte Imprimer ; absents : réglages du pilote.
+            sheet = body.get("sheet")
+            duplex = body.get("duplex")
+            if sheet is not None and (not isinstance(sheet, str) or sheet not in SHEETS):
+                raise ApiError("Format de feuille inconnu.", "bad_sheet")
+            if duplex is not None and (not isinstance(duplex, str) or duplex not in DUPLEX_MODES):
+                raise ApiError("Recto verso inconnu.", "bad_duplex")
             try:
                 self._printing().print_document(name, copies, session.name, pages, session.page_size,
-                                                session.render_print, output=output)
+                                                session.render_print, output=output, sheet=sheet, duplex=duplex)
             except PrintError as exc:
                 raise ApiError(str(exc), "print_failed") from exc
+            result.update({"sheet": sheet, "duplex": duplex})
         self.app.settings.remember_printer(name)
         if output:
             result["output"] = output
         self._json(result)
 
-    def api_pages_insert_dialog(self, query):
-        body = self._json_body()
-        session = self.app.require_session()
+    # -- ajout et assemblage de PDF --
+
+    def _dialogs(self):
         dialogs = self.app.dialogs
         if dialogs is None:
             raise ApiError("Dialogue indisponible.", "no_dialog", HTTPStatus.CONFLICT)
-        path = dialogs.open_pdf(self.app.settings.get("last_dir") or "")
-        if not path:
+        return dialogs
+
+    def api_dialog_open_pdfs(self, query):
+        """Dialogue Windows à sélection multiple, seul : l'interface montre ensuite
+        l'avancement de l'ajout ou de l'assemblage. Rangés par nom (« 2 - plan » avant
+        « 10 - annexe ») : Windows les rend dans un ordre variable."""
+        paths = sort_like_explorer([str(p) for p in (self._dialogs().open_pdfs(self.app.settings.get("last_dir") or "") or []) if p])
+        if not paths:
             self._json({"cancelled": True})
             return
+        self.app.settings.remember_dir(paths[0])
+        self._json({"paths": paths})
+
+    def api_dialog_save_pdf(self, query):
+        """Dialogue « Enregistrer » de Windows, seul ; `name` : nom proposé."""
+        session = self.app.require_session()
+        name = re.split(r"[\\/]", str(self._json_body().get("name") or session.name))[-1][:200] or "document.pdf"
+        path = self._dialogs().save_pdf(self._suggested_dir(session), name)
+        self._json({"path": path} if path else {"cancelled": True})
+
+    def _local_pdfs(self, body) -> list[tuple[str, bytes]]:
+        """PDF du poste désignés par leur chemin (choisis dans le dialogue Windows)."""
         from .document import read_file
 
-        at = body.get("at")
-        self._done(session.insert_pdf(read_file(path), None if at is None else int(at)))
+        paths = body.get("paths")
+        if not isinstance(paths, list) or not paths or not all(isinstance(p, str) and p for p in paths):
+            raise ApiError("Aucun PDF choisi.", "empty")
+        if len(paths) > MAX_FILES:
+            raise ApiError(f"{MAX_FILES} PDF au plus en une fois.", "too_many")
+        paths = [os.path.abspath(path) for path in paths]
+        for path in paths:
+            if not os.path.isfile(path):
+                raise ApiError(f"« {Path(path).name} » n'existe plus.", "not_found")
+        if sum(os.path.getsize(path) for path in paths) > MAX_UPLOAD:
+            raise ApiError("Fichiers trop volumineux : 1 Go au plus en une fois. Ajoutez-les en plusieurs fois.", "too_large")
+        return [(Path(path).name, read_file(path)) for path in paths]
+
+    def _uploaded_pdfs(self, query) -> list[tuple[str | None, bytes]]:
+        """PDF envoyés bout à bout dans le corps : `sizes` (octets de chacun, dans l'ordre)
+        et `names` (liste JSON) ; sans `sizes`, un seul PDF."""
+        data = self._body(MAX_UPLOAD)
+        if not data:
+            raise ApiError("Fichier vide.", "empty")
+        raw = (query.get("sizes") or [""])[0]
+        try:
+            sizes = [int(s) for s in raw.split(",")] if raw else [len(data)]
+            names = json.loads((query.get("names") or ["[]"])[0])
+        except ValueError:
+            raise ApiError("Requête invalide.", "bad_request")
+        if len(sizes) > MAX_FILES:
+            raise ApiError(f"{MAX_FILES} PDF au plus en une fois.", "too_many")
+        if any(size <= 0 for size in sizes) or sum(sizes) != len(data):
+            raise ApiError("Envoi des fichiers incomplet : recommencez.", "bad_request")
+        if not isinstance(names, list):
+            names = []
+        out, offset = [], 0
+        for index, size in enumerate(sizes):
+            name = names[index] if index < len(names) and isinstance(names[index], str) else ""
+            # Nom affiché seulement (messages, signets) : jamais un chemin.
+            name = re.split(r"[\\/]", name)[-1].strip()[:200] or None
+            out.append((name, data[offset:offset + size]))
+            offset += size
+        return out
+
+    def _inserted(self, summary: dict, info: dict) -> None:
+        self._done(summary, inserted={k: info[k] for k in ("start", "count", "files")}, signed_sources=info.get("signed") or [])
+
+    def _at(self, value) -> int | None:
+        if value in (None, ""):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            raise ApiError("Page invalide.", "bad_page")
+
+    def api_pages_insert_files(self, query):
+        body = self._json_body()
+        session = self.app.require_session()
+        at = self._at(body.get("at"))
+        self._inserted(*session.insert_pdfs(self._local_pdfs(body), at))
 
     def api_pages_insert_upload(self, query):
         session = self.app.require_session()
-        data = self._body(MAX_UPLOAD)
-        at = (query.get("at") or [None])[0]
-        self._done(session.insert_pdf(data, None if at in (None, "") else int(at)))
+        at = self._at((query.get("at") or [None])[0])
+        self._inserted(*session.insert_pdfs(self._uploaded_pdfs(query), at))
+
+    def _assembled(self, sources: list[tuple[str | None, bytes]], origin_dir: str | None) -> None:
+        summary, signed = self.app.open_assembly(sources, origin_dir=origin_dir)
+        self._done(summary, assembled=len(sources), signed_sources=signed)
+
+    def api_assemble_files(self, query):
+        body = self._json_body()
+        sources = self._local_pdfs(body)
+        self._assembled(sources, str(Path(os.path.abspath(body["paths"][0])).parent))
+
+    def api_assemble_upload(self, query):
+        self._assembled(self._uploaded_pdfs(query), None)
+
+    # -- compression --
+
+    def _compressed(self, level: str) -> tuple[bytes, int]:
+        """Copie compressée de l'état courant à ce niveau (gardée jusqu'à la prochaine
+        modification) et taille du document tel qu'il serait enregistré."""
+        from .document import COMPRESSION_LEVELS, FITZ_LOCK
+
+        if level not in COMPRESSION_LEVELS:
+            raise ApiError("Niveau de compression inconnu.", "bad_level")
+        session = self.app.require_session()
+        with FITZ_LOCK:  # état du document figé pendant le calcul
+            key = (session.id, session.history.state_id)
+            cache = self.app.compressed
+            if cache["key"] != key:
+                cache = self.app.compressed = {"key": key, "levels": {}, "before": None}
+            if level not in cache["levels"]:
+                cache["levels"][level] = session.compressed_bytes(level)
+            if cache["before"] is None:
+                cache["before"] = len(session.export_bytes())
+            return cache["levels"][level], cache["before"]
+
+    def api_compress_estimate(self, query):
+        level = (query.get("level") or [""])[0]
+        data, before = self._compressed(level)
+        self._json({"level": level, "before": before, "after": len(data)})
+
+    def api_compress_save(self, query):
+        """Enregistre la copie compressée dans le fichier choisi (dialogue `api/dialog/save-pdf`
+        ou chemin saisi) ; l'original reste intact. Refusée si elle n'est pas plus petite."""
+        from .document import FITZ_LOCK, atomic_write
+
+        body = self._json_body()
+        session = self.app.require_session()
+        level = str(body.get("level") or "")
+        path = str(body.get("path") or "")
+        if not path:
+            raise ApiError("Indiquez le chemin du fichier compressé.", "need_path", HTTPStatus.CONFLICT)
+        if not path.lower().endswith(".pdf"):
+            path += ".pdf"
+        # Verrou tenu jusqu'au bout : aucune modification ne s'intercale entre la copie
+        # compressée et le remplacement du document ouvert.
+        with FITZ_LOCK:
+            data, before = self._compressed(level)
+            if len(data) >= before:
+                raise ApiError("Ce PDF est déjà compact : la compression ne réduirait pas sa taille.", "no_gain")
+            atomic_write(path, data)
+            self.app.settings.remember_dir(path)
+            result = {"path": path, "name": Path(path).name, "before": before, "after": len(data)}
+            if session.path and os.path.normcase(os.path.abspath(path)) == os.path.normcase(os.path.abspath(session.path)):
+                # Fichier du document remplacé par sa version compressée : le document ouvert la reprend.
+                self.app.render_cache.clear()
+                summary = session.replace_with(data, path=path)
+            else:
+                summary = None
+        if summary is not None:
+            self._done(summary, **result)
+            return
+        self._json(result)
 
     def api_undo(self, query):
         self._done(self.app.require_session().undo())
@@ -824,7 +1025,7 @@ class Handler(BaseHTTPRequestHandler):
     def _suggested_dir(self, session) -> str:
         if session.path:
             return str(Path(session.path).parent)
-        return self.app.settings.get("last_dir") or str(Path.home() / "Documents")
+        return session.origin_dir or self.app.settings.get("last_dir") or str(Path.home() / "Documents")
 
     def _after_save(self, session) -> None:
         if session.path:
@@ -1071,8 +1272,15 @@ for _method, _pattern, _name in (
     ("POST", r"api/pages/rotate", "api_pages_rotate"),
     ("POST", r"api/pages/delete", "api_pages_delete"),
     ("POST", r"api/pages/move", "api_pages_move"),
-    ("POST", r"api/pages/insert-dialog", "api_pages_insert_dialog"),
+    ("POST", r"api/pages/move-many", "api_pages_move_many"),
+    ("POST", r"api/pages/insert-files", "api_pages_insert_files"),
     ("POST", r"api/pages/insert-upload", "api_pages_insert_upload"),
+    ("POST", r"api/assemble-files", "api_assemble_files"),
+    ("POST", r"api/assemble-upload", "api_assemble_upload"),
+    ("POST", r"api/dialog/open-pdfs", "api_dialog_open_pdfs"),
+    ("POST", r"api/dialog/save-pdf", "api_dialog_save_pdf"),
+    ("GET", r"api/compress/estimate", "api_compress_estimate"),
+    ("POST", r"api/compress/save", "api_compress_save"),
     ("POST", r"api/undo", "api_undo"),
     ("POST", r"api/redo", "api_redo"),
     ("POST", r"api/save", "api_save"),

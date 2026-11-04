@@ -73,6 +73,20 @@ class WindowDialogs:
             return None
         return result[0] if isinstance(result, (list, tuple)) else str(result)
 
+    def open_pdfs(self, directory: str) -> list[str]:
+        """Plusieurs PDF (Ctrl ou Maj dans le dialogue) ; le serveur les range par nom."""
+        import webview
+
+        result = self.window.create_file_dialog(
+            webview.FileDialog.OPEN,
+            directory=directory or "",
+            allow_multiple=True,
+            file_types=("Documents PDF (*.pdf)", "Tous les fichiers (*.*)"),
+        )
+        if not result:
+            return []
+        return [str(p) for p in result] if isinstance(result, (list, tuple)) else [str(result)]
+
     def save_pdf(self, directory: str, filename: str) -> str | None:
         return self._save(directory, filename, ("Documents PDF (*.pdf)",))
 

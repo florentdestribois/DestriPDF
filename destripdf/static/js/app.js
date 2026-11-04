@@ -1,16 +1,19 @@
 // Orchestration : démarrage, ouverture, enregistrement, raccourcis, recherche,
-// impression, signature, glisser-déposer et fermeture.
+// impression, signature, assemblage, compression, glisser-déposer et fermeture.
 
 import { Api, ApiError } from './api.js';
 import {
-  busy, closeMenu, confirmModal, el, formatDate, hydrateIcons, iconEl, installTooltips,
+  busy, closeMenu, confirmModal, el, formatDate, formatSize, hydrateIcons, iconEl, installTooltips,
   isModalOpen, modal, promptModal, showMenu, toast,
 } from './ui.js';
 import { Viewer } from './viewer.js';
 import { LineEditor } from './textedit.js';
 import { ToolManager, TOOLS } from './tools.js';
 import { Panel, Sidebar } from './panels.js';
+import { PageSelection, byName, isPdfFile } from './pagesorter.js';
+import { Organizer } from './organizer.js';
 const $ = (id) => document.getElementById(id);
+const MAX_UPLOAD = 1024 * 1024 * 1024; // limite d'un envoi au serveur (server.MAX_UPLOAD)
 
 class App {
   constructor() {
@@ -20,7 +23,9 @@ class App {
     this.viewer = new Viewer($('viewer'), $('pages'));
     this.editor = new LineEditor(this);
     this.tools = new ToolManager(this);
+    this.pageSelection = new PageSelection(); // partagée par les vignettes et « Organiser »
     this.sidebar = new Sidebar(this);
+    this.organizer = new Organizer(this);
     this.panel = new Panel(this);
     this.search = { query: '', hits: [], index: -1, timer: null, seq: 0 };
     this.busyOps = 0;
@@ -87,6 +92,8 @@ class App {
   bindChrome() {
     $('btn-open').addEventListener('click', () => this.openDialog());
     $('start-open').addEventListener('click', () => this.openDialog());
+    $('start-assemble').addEventListener('click', () => this.assemble());
+    $('btn-organize').addEventListener('click', () => this.organizer.toggle());
     $('btn-save').addEventListener('click', () => this.save());
     $('btn-sign').addEventListener('click', () => this.startSigning());
     $('btn-more').addEventListener('click', (e) => this.moreMenu(e.currentTarget));
@@ -138,23 +145,29 @@ class App {
       e.target.value = '';
       if (file) this.uploadFile(file);
     });
-    $('insert-input').addEventListener('change', async (e) => {
-      const file = e.target.files[0];
+    $('insert-input').addEventListener('change', (e) => {
+      const files = [...e.target.files];
       e.target.value = '';
-      if (!file) return;
-      await this.mutate(() => Api.upload(`api/pages/insert-upload?at=${this.insertAt ?? this.doc.page_count}`, file), 'Pages insérées.');
+      if (files.length && this.doc) this.addFiles(files, this.insertAt ?? this.doc.page_count);
+    });
+    $('assemble-input').addEventListener('change', (e) => {
+      const files = [...e.target.files];
+      e.target.value = '';
+      if (files.length) this.assembleFiles(files, { confirmed: true });
     });
   }
 
   // --- Affichage du document ---
 
-  async onOpened(doc) {
+  async onOpened(doc, { organize = false } = {}) {
     this.editor.close();
     this.tools.cancelTransient();
     this.tools.deselect();
     this.tools.clearSignFrame();
+    this.organizer.close();
     this.panel.reports = null;
     this.doc = null;
+    this.pageSelection.clear();
     $('start').hidden = true;
     document.body.classList.remove('no-doc');
     await this.applyDoc(doc);
@@ -164,14 +177,18 @@ class App {
     if (doc.signed) this.panel.loadReports();
     else this.updateSignatureBanner(null);
     if (this.panel.isOpen) this.panel.open(this.panel.tab === 'signatures' && !doc.signed ? 'comments' : this.panel.tab);
+    if (organize) this.organizer.open();
   }
 
   async applyDoc(doc, { waitPage = null } = {}) {
     const previous = this.doc;
     const sameDoc = previous && previous.id === doc.id;
+    // Réponse plus ancienne que l'état affiché (deux demandes croisées) : ignorée.
+    if (sameDoc && doc.version < previous.version) return;
     const structural = !sameDoc || previous.page_count !== doc.page_count
       || doc.pages.some((p, i) => !previous.pages[i] || previous.pages[i].w !== p.w || previous.pages[i].h !== p.h || previous.pages[i].rot !== p.rot);
     this.doc = doc;
+    this.pageSelection.clamp(doc.page_count);
     if (!sameDoc) {
       this.viewer.load(doc);
       this.sidebar.render(doc);
@@ -179,6 +196,7 @@ class App {
       this.viewer.update(doc);
       this.sidebar.update(doc, structural);
     }
+    this.organizer.update(doc, structural || !sameDoc);
     this.updateChrome();
     this.panel.onDoc(doc);
     if (structural && sameDoc) this.tools.placeSignFrame();
@@ -218,6 +236,11 @@ class App {
 
   onPageChange(index) {
     if (document.activeElement !== $('page-input')) $('page-input').value = String(index + 1);
+    // Une page choisie seule suit la page affichée, une fois sortie de l'écran (la page
+    // cliquée reste choisie même si le défilement en désigne une autre, en fin de
+    // document par exemple) ; plusieurs pages choisies restent.
+    const [single] = this.pageSelection.size === 1 ? this.pageSelection.list() : [];
+    if (!this.organizer.isOpen && !(single !== undefined && this.viewer.isOnScreen(single))) this.pageSelection.follow(index);
     this.sidebar.setCurrent(index);
   }
 
@@ -226,6 +249,8 @@ class App {
   }
 
   showStart(recent) {
+    this.organizer.close();
+    this.pageSelection.clear();
     this.doc = null;
     document.body.classList.add('no-doc');
     $('start').hidden = false;
@@ -366,46 +391,349 @@ class App {
     if (!this.doc?.can_undo) return;
     this.editor.close();
     this.tools.deselect();
-    await this.mutate(() => Api.post('api/undo'));
+    if (await this.pageOp(() => Api.post('api/undo'))) this.resetPageSelection();
   }
 
   async redo() {
     if (!this.doc?.can_redo) return;
     this.editor.close();
     this.tools.deselect();
-    await this.mutate(() => Api.post('api/redo'));
+    if (await this.pageOp(() => Api.post('api/redo'))) this.resetPageSelection();
+  }
+
+  // Après annuler ou rétablir, l'ordre des pages a pu changer : la sélection gardée
+  // par position viserait d'autres pages.
+  resetPageSelection() {
+    this.pageSelection.clear();
+    if (!this.organizer.isOpen) this.pageSelection.follow(this.viewer.current);
+  }
+
+  // Une modification des pages à la fois : les numéros d'une demande valent pour
+  // l'état affiché ; une seconde demande partie avant la réponse viserait d'autres pages.
+  async pageOp(request, okMessage = null) {
+    if (this.pageOpPending) {
+      toast('Modification des pages en cours : patientez un instant.', 'info');
+      return null;
+    }
+    this.pageOpPending = true;
+    try {
+      return await this.mutate(request, okMessage);
+    } finally {
+      this.pageOpPending = false;
+    }
   }
 
   async rotatePages(pages, angle) {
-    await this.mutate(() => Api.post('api/pages/rotate', { pages, angle }));
+    await this.pageOp(() => Api.post('api/pages/rotate', { pages, angle }));
   }
 
   async deletePages(pages) {
-    if (!this.doc) return;
+    if (!this.doc || !pages.length) return;
     if (this.doc.page_count <= pages.length) {
       toast('Un PDF garde au moins une page.', 'error');
       return;
     }
-    const data = await this.mutate(() => Api.post('api/pages/delete', { pages }));
-    if (data) toast(pages.length > 1 ? 'Pages supprimées.' : `Page ${pages[0] + 1} supprimée.`, 'ok', { action: 'Annuler', onAction: () => this.undo() });
+    const data = await this.pageOp(() => Api.post('api/pages/delete', { pages }));
+    if (!data) return;
+    this.pageSelection.clear();
+    if (this.organizer.isOpen) this.organizer.sorter.focusItem(Math.min(pages[0], this.doc.page_count - 1), false);
+    else this.pageSelection.follow(this.viewer.current);
+    toast(pages.length > 1 ? `${pages.length} pages supprimées.` : `Page ${pages[0] + 1} supprimée.`, 'ok', { action: 'Annuler', onAction: () => this.undo() });
   }
 
   async movePage(from, to) {
-    await this.mutate(() => Api.post('api/pages/move', { from, to }));
+    await this.pageOp(() => Api.post('api/pages/move', { from, to }));
     this.viewer.scrollToPage(to);
   }
 
-  async insertPdf(at) {
+  // Pages choisies déplacées ensemble avant la page `before` (le nombre de pages : à la fin).
+  async movePagesTo(pages, before) {
+    if (!this.doc || !pages.length) return;
+    const data = await this.pageOp(() => Api.post('api/pages/move-many', { pages, before }));
+    if (!data?.moved) return;
+    const { start, count } = data.moved;
+    this.pageSelection.range(start, start + count - 1);
+    this.pageSelection.anchor = start;
+    if (this.organizer.isOpen) this.organizer.reveal(start, count);
+    else {
+      this.viewer.scrollToPage(start);
+      this.sidebar.sorter.focusItem(start);
+    }
+  }
+
+  // PDF choisis dans le dialogue Windows (sélection multiple, rangés par nom) ; null si annulé.
+  async choosePdfs() {
+    try {
+      const data = await Api.post('api/dialog/open-pdfs');
+      return data.cancelled ? null : data.paths;
+    } catch (err) {
+      toast(err.message, 'error');
+      return null;
+    }
+  }
+
+  static fileCount(paths) {
+    return paths.length > 1 ? `${paths.length} PDF` : `« ${paths[0].split(/[\\/]/).pop()} »`;
+  }
+
+  // « Ajouter des PDF » : dialogue Windows à sélection multiple, ou champ de fichier (navigateur).
+  async addPdfs(at) {
     if (!this.doc) return;
+    if (this.editor.isOpen) await this.editor.commit();
     this.insertAt = at;
-    if (this.state?.app?.dialogs) {
-      await this.mutate(() => Api.post('api/pages/insert-dialog', { at }), 'Pages insérées.');
-    } else {
+    if (!this.state?.app?.dialogs) {
       $('insert-input').click();
+      return;
+    }
+    if (this.pageOpPending) {
+      toast('Modification des pages en cours : patientez un instant.', 'info');
+      return;
+    }
+    const paths = await this.choosePdfs();
+    if (!paths || !this.doc || this.pageOpPending) return;
+    this.pageOpPending = true;
+    const indicator = busy(`Ajout de ${App.fileCount(paths)}…`);
+    try {
+      await this.afterInsert(await Api.post('api/pages/insert-files', { paths, at }));
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      indicator.close();
+      this.pageOpPending = false;
+    }
+  }
+
+  // Ancien nom (menus, recette) : insérer un ou plusieurs PDF avant la page `at`.
+  insertPdf(at) {
+    return this.addPdfs(at);
+  }
+
+  // PDF bout à bout dans un seul envoi : une seule étape d'annulation.
+  static uploadQuery(files) {
+    const sizes = files.map((f) => f.size).join(',');
+    const names = encodeURIComponent(JSON.stringify(files.map((f) => (f.name || '').slice(0, 150))));
+    return { body: new Blob(files), query: `sizes=${sizes}&names=${names}` };
+  }
+
+  pdfsOnly(files) {
+    const pdfs = files.filter(isPdfFile).sort(byName);
+    const skipped = files.length - pdfs.length;
+    if (!pdfs.length) toast(files.length > 1 ? 'Aucun de ces fichiers n\'est un PDF.' : 'Ce fichier n\'est pas un PDF.', 'error');
+    else if (skipped) toast(`${skipped} fichier${skipped > 1 ? 's' : ''} ignoré${skipped > 1 ? 's' : ''} : seuls les PDF s'assemblent.`, 'info');
+    const empty = pdfs.filter((f) => !f.size);
+    if (empty.length) {
+      toast(`« ${empty[0].name} » est vide.`, 'error');
+      return [];
+    }
+    // Limite d'un envoi (serveur) : au-delà, la connexion serait coupée sans explication.
+    const total = pdfs.reduce((sum, f) => sum + f.size, 0);
+    if (total > MAX_UPLOAD) {
+      toast(`Fichiers trop volumineux (${formatSize(total)}) : 1 Go au plus en une fois. Ajoutez-les en plusieurs fois.`, 'error', { duration: 9000 });
+      return [];
+    }
+    return pdfs;
+  }
+
+  // PDF déposés ou choisis (navigateur), insérés avant la page `at`, rangés par nom.
+  async addFiles(files, at) {
+    if (!this.doc) return;
+    if (this.pageOpPending) {
+      toast('Modification des pages en cours : patientez un instant.', 'info');
+      return;
+    }
+    const pdfs = this.pdfsOnly(files);
+    if (!pdfs.length) return;
+    if (this.editor.isOpen) await this.editor.commit();
+    const { body, query } = App.uploadQuery(pdfs);
+    this.pageOpPending = true;
+    const indicator = busy(pdfs.length > 1 ? `Ajout de ${pdfs.length} PDF…` : `Ajout de « ${pdfs[0].name} »…`);
+    try {
+      const data = await Api.upload(`api/pages/insert-upload?at=${Math.max(0, Math.round(at))}&${query}`, body);
+      await this.afterInsert(data);
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      indicator.close();
+      this.pageOpPending = false;
+    }
+  }
+
+  async afterInsert(data) {
+    await this.applyDoc(data.doc);
+    const { start, count, files } = data.inserted;
+    this.pageSelection.range(start, start + count - 1);
+    this.pageSelection.anchor = start;
+    if (this.organizer.isOpen) this.organizer.reveal(start, count);
+    else this.viewer.scrollToPage(start);
+    const plural = count > 1 ? 's' : '';
+    toast(`${count} page${plural} ajoutée${plural}${files > 1 ? ` (${files} PDF)` : ''}.`, 'ok', { action: 'Annuler', onAction: () => this.undo() });
+    this.warnSigned(data.signed_sources);
+  }
+
+  warnSigned(names) {
+    if (!names?.length) return;
+    const list = names.map((n) => `« ${n} »`).join(', ');
+    toast(`${list} ${names.length > 1 ? 'étaient signés' : 'était signé'} : la signature reste visible mais n'a plus de valeur électronique dans ce document. Signez-le une fois terminé.`, 'info', { duration: 10000 });
+  }
+
+  // Nouveau document fait de plusieurs PDF (jamais enregistré à la place d'une source).
+  async assemble() {
+    if (!(await this.confirmDiscard())) return;
+    if (!this.state?.app?.dialogs) {
+      $('assemble-input').click();
+      return;
+    }
+    const paths = await this.choosePdfs();
+    if (!paths) return;
+    const indicator = busy(`Assemblage de ${App.fileCount(paths)}…`);
+    try {
+      await this.afterAssemble(await Api.post('api/assemble-files', { paths }));
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      indicator.close();
+    }
+  }
+
+  async assembleFiles(files, { confirmed = false } = {}) {
+    const pdfs = this.pdfsOnly(files);
+    if (!pdfs.length) return;
+    if (!confirmed && !(await this.confirmDiscard())) return;
+    const { body, query } = App.uploadQuery(pdfs);
+    const indicator = busy(`Assemblage de ${pdfs.length} PDF…`);
+    try {
+      await this.afterAssemble(await Api.upload(`api/assemble-upload?${query}`, body));
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      indicator.close();
+    }
+  }
+
+  async afterAssemble(data) {
+    await this.onOpened(data.doc, { organize: true });
+    const pages = data.doc.page_count;
+    toast(`${data.assembled} PDF assemblés : ${pages} page${pages > 1 ? 's' : ''}. Glissez les pages pour changer leur ordre, puis enregistrez.`, 'ok', { duration: 7000 });
+    this.warnSigned(data.signed_sources);
+  }
+
+  // --- Compression ---
+
+  async compress() {
+    if (!this.doc) return;
+    if (this.editor.isOpen) await this.editor.commit();
+    if (this.doc.signed) {
+      toast('Ce document est signé : le compresser invaliderait ses signatures. Compressez-le avant de le signer.', 'error', { duration: 8000 });
+      return;
+    }
+    const levels = [
+      ['print', 'Qualité élevée', 'Pour l\'impression : images limitées à 300 ppp, très peu de perte.'],
+      ['screen', 'Équilibrée', 'Écran et courriel : images à 150 ppp. Recommandée.'],
+      ['minimum', 'Taille minimale', 'Plateformes limitées en taille : images à 100 ppp, qualité réduite.'],
+    ];
+    let level = 'screen';
+    const estimates = {};
+    const pending = new Set(); // estimations en cours
+    let closed = false;
+    let before = null;
+    let footer = null; // bouton « Enregistrer… » de la boîte
+    const current = el('p', { class: 'help compress-current', text: 'Taille actuelle : calcul…' });
+    const list = el('div', { class: 'choice-list', role: 'radiogroup', 'aria-label': 'Niveau de compression' });
+    const canSave = () => {
+      const e = estimates[level];
+      return Boolean(e && !e.error && e.after < e.before);
+    };
+    const describe = (id) => {
+      const e = estimates[id];
+      if (!e) return pending.has(id) ? 'Taille estimée : calcul…' : 'Choisissez ce niveau pour estimer la taille.';
+      if (e.error) return e.error;
+      if (e.after >= e.before) return 'Aucun gain : ce PDF est déjà compact à ce niveau.';
+      return `≈ ${formatSize(e.after)} (−${Math.round((1 - e.after / e.before) * 100)} %)`;
+    };
+    const paint = () => {
+      list.replaceChildren(...levels.map(([id, title, help]) => {
+        const item = el('button', { class: 'choice', type: 'button', role: 'radio', 'aria-checked': String(level === id), dataset: { level: id } },
+          el('span', { class: 'choice-radio' }),
+          el('span', { class: 'choice-main' },
+            el('span', { class: 'choice-name', text: title }),
+            el('span', { class: 'choice-meta', text: help }),
+            el('span', { class: `choice-size${!estimates[id] || estimates[id].error || estimates[id].after >= estimates[id].before ? ' none' : ''}`, text: describe(id) })));
+        item.addEventListener('click', () => { level = id; paint(); estimate(id); });
+        return item;
+      }));
+      if (footer) footer.disabled = !canSave();
+      if (before !== null) current.textContent = `Taille actuelle : ${formatSize(before)} — ${this.doc.page_count} page${this.doc.page_count > 1 ? 's' : ''}.`;
+    };
+    const estimate = async (id) => {
+      if (estimates[id] || pending.has(id)) return;
+      pending.add(id);
+      paint();
+      const started = performance.now();
+      try {
+        const data = await Api.get(`api/compress/estimate?level=${id}`);
+        estimates[id] = data;
+        before = data.before;
+      } catch (err) {
+        estimates[id] = { error: err.message };
+      } finally {
+        pending.delete(id);
+      }
+      paint();
+      // Calcul rapide : les autres niveaux sont estimés aussitôt, l'un après l'autre
+      // (un gros document n'occupe pas le moteur PDF pour des niveaux non choisis).
+      if (!closed && performance.now() - started < 2500 && !estimates[id].error) {
+        const next = levels.map(([other]) => other).find((other) => !estimates[other] && !pending.has(other));
+        if (next) estimate(next);
+      }
+    };
+    paint();
+    estimate(level);
+    const body = el('div', { class: 'compress-dialog' }, current, list,
+      el('p', { class: 'help', text: 'Seules les images sont recompressées : texte, tracés, annotations et champs restent intacts. Le PDF compressé est enregistré dans un nouveau fichier ; l\'original reste inchangé.' }));
+    const choice = await modal({
+      title: 'Compresser le PDF',
+      body,
+      wide: true,
+      buttons: [{ label: 'Annuler', value: null }, { label: 'Enregistrer…', value: 'ok', kind: 'btn-primary', default: true, validate: canSave }],
+      onOpen: (dialog) => {
+        // « Enregistrer… » attend l'estimation du niveau choisi et un gain réel.
+        footer = dialog.querySelector('.modal-actions .btn-primary');
+        footer.disabled = !canSave();
+      },
+    });
+    closed = true;
+    if (choice !== 'ok') return;
+    const stem = (this.doc.name || 'document').replace(/\.pdf$/i, '');
+    let path;
+    if (this.state?.app?.dialogs) {
+      try {
+        path = (await Api.post('api/dialog/save-pdf', { name: `${stem} - compressé.pdf` })).path;
+      } catch (err) {
+        toast(err.message, 'error');
+        return;
+      }
+    } else {
+      const folder = (this.doc.path || '').replace(/[^\\/]*$/, '');
+      path = await promptModal('Enregistrer le PDF compressé', { label: 'Chemin complet du fichier', value: `${folder}${stem} - compressé.pdf`, confirm: 'Enregistrer' });
+    }
+    if (!path) return;
+    const indicator = busy('Compression et enregistrement…');
+    try {
+      const data = await Api.post('api/compress/save', { level, path });
+      if (data.doc) await this.applyDoc(data.doc);
+      const gain = Math.round((1 - data.after / data.before) * 100);
+      const text = `PDF compressé enregistré : ${data.name} — ${formatSize(data.before)} → ${formatSize(data.after)} (−${gain} %).`;
+      if (data.doc) toast(text, 'ok', { duration: 9000 });
+      else toast(text, 'ok', { duration: 12000, action: 'Ouvrir', onAction: () => this.openPath(data.path) });
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      indicator.close();
     }
   }
 
   focusAnnotation(page, id, rect) {
+    this.organizer.close();
     this.tools.set('select');
     this.viewer.scrollToPage(page);
     this.viewer.scrollToRect(page, rect);
@@ -427,6 +755,7 @@ class App {
   async save() {
     if (!this.doc) return false;
     if (this.editor.isOpen) await this.editor.commit();
+    if (!this.doc.path) return this.saveAs(); // document assemblé ou déposé : pas encore de fichier
     try {
       const data = await Api.post('api/save');
       await this.applyDoc(data.doc);
@@ -598,10 +927,11 @@ class App {
   // --- Impression ---
 
   // Boîte Imprimer de DestriPDF, comme celle d'Acrobat : imprimante et ses
-  // préférences, mise en page (pages normales ou livret), pages, copies.
-  // Le livret est mis en page par DestriPDF (deux pages par face, ordre du
-  // pliage) et imprimé en A4 paysage recto verso bord court : la fonction
-  // Livret de l'imprimante n'est jamais utilisée (la Canon y réclame du A4R).
+  // préférences, mise en page (pages normales ou livret), papier A4 ou A3,
+  // recto verso, pages, copies. Papier et recto verso partent des réglages en
+  // cours du pilote. Le livret est mis en page par DestriPDF (deux pages par
+  // face, ordre du pliage) et envoyé comme un document Word recto verso : la
+  // fonction Livret de l'imprimante n'est jamais utilisée (la Canon y réclame du A4R).
   async print() {
     if (!this.doc) return;
     if (this.editor.isOpen) await this.editor.commit();
@@ -629,7 +959,10 @@ class App {
       preferences.disabled = true;
       try {
         const data = await Api.post('api/print/preferences', { printer: printer.value });
-        if (data.changed) prefsNote.textContent = `Préférences de « ${printer.value} » enregistrées pour cette impression et les suivantes.`;
+        if (data.changed) {
+          prefsNote.textContent = `Préférences de « ${printer.value} » enregistrées pour cette impression et les suivantes.`;
+          loadCaps(); // papier et recto verso choisis dans le pilote
+        }
       } catch (err) {
         toast(err.message, 'error');
       } finally {
@@ -648,24 +981,43 @@ class App {
     const copies = el('input', { class: 'num-input', type: 'number', min: '1', max: '99', step: '1', value: '1', 'aria-label': 'Copies' });
     const pagesValue = () => (scope.value === 'range' ? range.value : scope.value);
 
-    // --- Livret ---
-    const sheet = el('select', { class: 'text-input', 'aria-label': 'Feuille du livret' });
+    // --- Papier et recto verso (pages normales), reliure (livret) ---
+    const sheet = el('select', { class: 'text-input', 'aria-label': 'Papier' });
+    const duplex = el('select', { class: 'text-input', 'aria-label': 'Recto verso' });
     const binding = el('select', { class: 'text-input', 'aria-label': 'Reliure' },
       el('option', { value: 'left', text: 'À gauche (lecture habituelle)' }),
       el('option', { value: 'right', text: 'À droite' }));
+    const duplexColumn = el('div', {}, el('label', { class: 'field-label spaced', text: 'Recto verso' }), duplex);
+    const bindingColumn = el('div', { hidden: true }, el('label', { class: 'field-label spaced', text: 'Reliure' }), binding);
+    const paperNote = el('p', { class: 'help', hidden: true });
+    const paperBox = el('div', {},
+      el('div', { class: 'print-columns' },
+        el('div', {}, el('label', { class: 'field-label spaced', text: 'Papier' }), sheet),
+        duplexColumn, bindingColumn),
+      paperNote);
+    const duplexLabels = {
+      simplex: 'Recto seul',
+      long: 'Recto verso — bord long (comme un livre)',
+      short: 'Recto verso — bord court (comme un bloc-notes)',
+    };
+
+    // --- Livret ---
     const flip = el('input', { type: 'checkbox' });
     const duplexNote = el('p', { class: 'help' });
     const plan = el('p', { class: 'help' });
     const preview = el('div', { class: 'booklet-preview', 'aria-label': 'Aperçu de la feuille 1' });
     const bookletBox = el('div', { class: 'print-booklet-box', hidden: true },
-      el('div', { class: 'print-columns' },
-        el('div', {}, el('label', { class: 'field-label', text: 'Feuille' }), sheet),
-        el('div', {}, el('label', { class: 'field-label', text: 'Reliure' }), binding)),
       duplexNote,
       el('label', { class: 'check' }, flip, el('span', { text: 'Retourner les versos (s\'ils sont sortis tête en bas au premier essai)' })),
       preview, plan);
     let caps = null;
-    const sheetLabels = { a4: 'A4 → livret A5', a3: 'A3 → livret A4' };
+    let capsFailed = false;
+    const sheetLabels = { a4: 'A4', a3: 'A3' };
+    const bookletLabels = { a4: 'A4 → livret A5', a3: 'A3 → livret A4' };
+    const labelSheets = () => {
+      const labels = layout.value === 'booklet' ? bookletLabels : sheetLabels;
+      for (const option of sheet.options) if (option.value) option.textContent = labels[option.value] || option.value.toUpperCase();
+    };
     const pageImage = (number) => {
       const info = doc.pages[number - 1];
       const scale = Math.min(0.3, 150 / Math.max(info.w, info.h));
@@ -706,25 +1058,52 @@ class App {
     const loadCaps = async () => {
       const seq = ++capsSeq;
       caps = null;
+      capsFailed = false;
       duplexNote.textContent = 'Lecture des capacités de l\'imprimante…';
+      paperNote.hidden = true;
       try {
         const data = await Api.get(`api/printers/capabilities?printer=${encodeURIComponent(printer.value)}`);
         if (seq !== capsSeq) return;
         caps = data;
-        const previous = sheet.value;
-        sheet.replaceChildren(...data.sheets.map((id) => el('option', { value: id, text: sheetLabels[id] || id.toUpperCase() })));
-        if (data.sheets.includes(previous)) sheet.value = previous;
+        // Papier et recto verso en cours dans le pilote (préférences ou défaut).
+        const now = data.current || {};
+        sheet.disabled = !data.sheets.length;
+        sheet.replaceChildren(...(data.sheets.length
+          ? data.sheets.map((id) => el('option', { value: id, text: id }))
+          : [el('option', { value: '', text: 'Selon l\'imprimante' })]));
+        if (data.sheets.includes(now.sheet)) sheet.value = now.sheet;
+        else if (data.sheets.includes('a4')) sheet.value = 'a4';
+        labelSheets();
+        const modes = data.duplex_modes || ['simplex'];
+        duplex.replaceChildren(...modes.map((mode) => el('option', { value: mode, text: duplexLabels[mode] || mode })));
+        duplex.value = modes.includes(now.duplex) ? now.duplex : 'simplex';
+        duplex.disabled = modes.length < 2;
+        paperNote.textContent = modes.length < 2 ? 'Cette imprimante n\'imprime pas en recto verso.' : '';
+        paperNote.hidden = layout.value === 'booklet' || !paperNote.textContent;
         flip.checked = Boolean(data.flip_backs);
         if (!data.sheets.length) duplexNote.textContent = 'Cette imprimante ne propose ni A4 ni A3 : livret impossible.';
         else duplexNote.textContent = data.duplex
           ? 'Recto verso automatique, envoyé comme un document Word (A4 portrait, bord long) : DestriPDF tourne lui-même les faces et les versos.'
           : 'Cette imprimante n\'imprime pas en recto verso : les faces sortent l\'une après l\'autre (recto, verso, recto…).';
       } catch (err) {
-        if (seq === capsSeq) duplexNote.textContent = err.message;
+        if (seq !== capsSeq) return;
+        capsFailed = true;
+        duplexNote.textContent = err.message;
+        // Pages normales encore possibles avec les réglages du pilote.
+        sheet.replaceChildren(el('option', { value: '', text: 'Selon l\'imprimante' }));
+        duplex.replaceChildren(el('option', { value: '', text: 'Selon l\'imprimante' }));
+        sheet.disabled = duplex.disabled = true;
+        paperNote.textContent = err.message;
+        paperNote.hidden = layout.value === 'booklet';
       }
     };
     const showLayout = () => {
-      bookletBox.hidden = layout.value !== 'booklet';
+      const booklet = layout.value === 'booklet';
+      bookletBox.hidden = !booklet;
+      duplexColumn.hidden = booklet;
+      bindingColumn.hidden = !booklet;
+      paperNote.hidden = booklet || !paperNote.textContent;
+      labelSheets();
       refreshPlan();
     };
     let rangeTimer = null;
@@ -748,6 +1127,7 @@ class App {
       el('div', { class: 'print-row' }, printer, preferences),
       prefsNote,
       el('label', { class: 'field-label spaced', text: 'Mise en page' }), layout,
+      paperBox,
       bookletBox,
       el('label', { class: 'field-label spaced', text: 'Pages' }), scope, range,
       el('label', { class: 'field-label spaced', text: 'Copies' }), copies);
@@ -761,7 +1141,11 @@ class App {
         kind: 'btn-primary',
         default: true,
         validate: () => {
-          if (layout.value !== 'booklet') return true;
+          if (layout.value !== 'booklet') {
+            if (caps || capsFailed) return true;
+            toast('Capacités de l\'imprimante en cours de lecture : réessayez dans un instant.', 'error');
+            return false;
+          }
           if (!caps) {
             toast('Capacités de l\'imprimante en cours de lecture : réessayez dans un instant.', 'error');
             return false;
@@ -779,6 +1163,7 @@ class App {
     if (choice !== 'ok') return;
     const payload = { printer: printer.value, pages: pagesValue(), current, copies: Number(copies.value), layout: layout.value };
     if (layout.value === 'booklet') Object.assign(payload, { sheet: sheet.value, binding: binding.value, flip_backs: flip.checked });
+    else Object.assign(payload, { sheet: sheet.value || undefined, duplex: duplex.value || undefined });
     const indicator = busy(layout.value === 'booklet' ? 'Mise en page du livret et envoi à l\'imprimante…' : 'Envoi à l\'imprimante…');
     try {
       const data = await Api.post('api/print', payload);
@@ -787,7 +1172,9 @@ class App {
         toast(`Livret envoyé à « ${printer.value} » : ${data.sheets} feuille${data.sheets > 1 ? 's' : ''} ${data.sheet.toUpperCase()} recto verso${copiesText}. Pliez la pile au milieu.`, 'ok', { duration: 9000 });
       } else {
         const count = `${data.pages} page${data.pages > 1 ? 's' : ''}`;
-        toast(`${count} envoyée${data.pages > 1 ? 's' : ''} à « ${printer.value} »${copiesText}.`, 'ok');
+        const sides = { simplex: 'recto seul', long: 'recto verso', short: 'recto verso bord court' }[data.duplex];
+        const paper = [data.sheet && data.sheet.toUpperCase(), sides].filter(Boolean).join(' ');
+        toast(`${count} envoyée${data.pages > 1 ? 's' : ''} à « ${printer.value} »${paper ? ` en ${paper}` : ''}${copiesText}.`, 'ok');
       }
     } catch (err) {
       if (err.code === 'no_dialog' && layout.value === 'normal') this.webPrint();
@@ -837,6 +1224,7 @@ class App {
 
   startSigning() {
     if (!this.doc) return;
+    this.organizer.close(); // le cadre de signature se place sur la page affichée
     this.panel.open('sign');
     const draft = this.panel.signDraft;
     const visible = draft ? draft.visible : this.settings?.sign_visible !== false;
@@ -915,6 +1303,7 @@ class App {
       const ok = await this.drawSignature();
       if (!ok) return;
     }
+    this.organizer.close();
     this.tools.set('stamp');
   }
 
@@ -1005,13 +1394,17 @@ class App {
     showMenu(anchor, [
       { label: 'Enregistrer sous…', icon: 'saveAs', shortcut: 'Ctrl+Maj+S', disabled: !doc, action: () => this.saveAs() },
       ...(this.state?.app?.dialogs ? [] : [{ label: 'Télécharger', icon: 'download', disabled: !doc, action: () => this.download() }]),
-      { label: 'Imprimer…', icon: 'print', shortcut: 'Ctrl+P', disabled: !doc, action: () => this.print() },      { label: 'Exporter en JPG…', icon: 'image', disabled: !doc, action: () => this.exportJpeg() },
+      { label: 'Imprimer…', icon: 'print', shortcut: 'Ctrl+P', disabled: !doc, action: () => this.print() },
+      { label: 'Exporter en JPG…', icon: 'image', disabled: !doc, action: () => this.exportJpeg() },
+      { label: 'Compresser le PDF…', icon: 'compress', disabled: !doc, action: () => this.compress() },
       { label: 'Fermer le document', icon: 'close', disabled: !doc, action: () => this.closeDocument() },
       '-',
+      { label: 'Organiser les pages', icon: 'grid', disabled: !doc, action: () => this.organizer.open() },
+      { label: 'Ajouter des PDF après cette page…', icon: 'addFiles', disabled: !doc, action: () => this.addPdfs(current + 1) },
+      { label: 'Assembler des PDF (nouveau document)…', icon: 'merge', action: () => this.assemble() },
       { label: 'Pivoter la page à droite', icon: 'rotate', disabled: !doc, action: () => this.rotatePages([current], 90) },
       { label: 'Pivoter la page à gauche', icon: 'rotateLeft', disabled: !doc, action: () => this.rotatePages([current], -90) },
       { label: 'Supprimer la page', icon: 'trash', disabled: !doc, action: () => this.deletePages([current]) },
-      { label: 'Insérer un PDF après cette page…', icon: 'insert', disabled: !doc, action: () => this.insertPdf(current + 1) },
       '-',
       { label: 'Commentaires', icon: 'comment', disabled: !doc, action: () => this.panel.open('comments') },
       ...(doc?.signed ? [{ label: 'Signatures du document', icon: 'shield', action: () => this.panel.open('signatures') }] : []),
@@ -1120,6 +1513,7 @@ class App {
       if (ctrl && key === 's') { e.preventDefault(); if (e.shiftKey) this.saveAs(); else this.save(); return; }
       if (!this.doc) return;
       if (ctrl && key === 'p') { e.preventDefault(); this.print(); return; }
+      if (this.organizer.isOpen) { this.organizerKey(e, { ctrl, key, typing, target }); return; }
       if (ctrl && key === 'f') { e.preventDefault(); $('search-input').focus(); $('search-input').select(); return; }
       if (ctrl && (key === '+' || key === '=')) { e.preventDefault(); this.viewer.zoomStep(1); return; }
       if (ctrl && (key === '-' || key === '_')) { e.preventDefault(); this.viewer.zoomStep(-1); return; }
@@ -1155,41 +1549,107 @@ class App {
     });
   }
 
+  // Raccourcis de la vue « Organiser » ; les pages elles-mêmes gèrent flèches, Suppr,
+  // Entrée et Ctrl+A quand elles ont le focus (PageSorter).
+  organizerKey(e, { ctrl, key, typing, target }) {
+    if (typing) return;
+    if (ctrl && key === 'z' && !e.shiftKey) { e.preventDefault(); this.undo(); return; }
+    if (ctrl && (key === 'y' || (key === 'z' && e.shiftKey))) { e.preventDefault(); this.redo(); return; }
+    if (ctrl && key === 'a') { e.preventDefault(); this.pageSelection.set([...Array(this.doc.page_count).keys()], 0); return; }
+    if (ctrl && (key === '+' || key === '=')) { e.preventDefault(); this.organizer.stepSize(1); return; }
+    if (ctrl && (key === '-' || key === '_')) { e.preventDefault(); this.organizer.stepSize(-1); return; }
+    if (ctrl || e.altKey) return;
+    if (e.key === 'Escape') {
+      if (e.defaultPrevented) return; // Échap a d'abord fermé un menu
+      e.preventDefault();
+      this.organizer.close();
+      return;
+    }
+    if (e.key === 'Delete' && this.pageSelection.size && target.closest?.('#organizer')) {
+      e.preventDefault();
+      this.deletePages(this.pageSelection.list());
+    }
+  }
+
   // --- Glisser-déposer ---
 
+  // Fichiers venus de l'Explorateur. Déposés sur les vignettes ou dans « Organiser » :
+  // insérés à l'endroit montré (PageSorter). Ailleurs : sans document, un PDF s'ouvre et
+  // plusieurs s'assemblent ; avec un document, un PDF s'ouvre à sa place et plusieurs
+  // s'ajoutent à la fin (toujours ajoutés dans « Organiser »). Le voile annonce l'effet.
   bindDrop() {
     const overlay = $('drop-overlay');
     let depth = 0;
     const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+    const reset = () => { depth = 0; overlay.hidden = true; };
     document.addEventListener('dragenter', (e) => {
       if (!hasFiles(e)) return;
       depth += 1;
-      overlay.hidden = false;
+      this.showDropOverlay(e);
     });
     document.addEventListener('dragleave', (e) => {
       if (!hasFiles(e)) return;
       depth = Math.max(0, depth - 1);
-      if (!depth) overlay.hidden = true;
+      if (!depth) reset();
     });
-    document.addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });
+    document.addEventListener('dragover', (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      this.showDropOverlay(e);
+    });
+    // Capture : le voile disparaît aussi quand une liste de pages reçoit le dépôt.
+    document.addEventListener('drop', () => reset(), true);
     document.addEventListener('drop', (e) => {
       if (!hasFiles(e)) return;
       e.preventDefault();
-      depth = 0;
-      overlay.hidden = true;
-      const file = [...e.dataTransfer.files].find((f) => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
-      if (!file) {
-        toast('Déposez un fichier PDF.', 'error');
-        return;
-      }
-      if (this.state?.app?.mode === 'window') {
-        // La fenêtre transmet le chemin réel (enregistrement sur place) ; sinon, envoi du fichier.
-        clearTimeout(this.pendingDrop?.timer);
-        this.pendingDrop = { file, timer: setTimeout(() => this.uploadDropped(), 900) };
-        return;
-      }
-      this.uploadFile(file);
+      this.dropFiles([...e.dataTransfer.files]);
     });
+  }
+
+  showDropOverlay(e) {
+    const overlay = $('drop-overlay');
+    if (e.target?.closest?.('.sorter-zone')) {
+      overlay.hidden = true; // la liste de pages montre elle-même l'endroit d'insertion
+      return;
+    }
+    const count = [...(e.dataTransfer?.items || [])].filter((item) => item.kind === 'file').length || 1;
+    let title;
+    let hint = '';
+    if (!this.doc) {
+      title = count > 1 ? `Déposez les ${count} PDF pour les assembler` : 'Déposez le PDF pour l\'ouvrir';
+    } else if (count > 1 || this.organizer.isOpen) {
+      title = count > 1 ? `Déposez pour ajouter ces ${count} PDF à la fin du document` : 'Déposez pour ajouter ce PDF à la fin du document';
+      hint = 'Pour les placer ailleurs, déposez-les entre deux pages.';
+    } else {
+      title = 'Déposez le PDF pour l\'ouvrir';
+      hint = 'Pour l\'ajouter à ce document, déposez-le entre deux vignettes ou dans « Organiser ».';
+    }
+    $('drop-title').textContent = title;
+    $('drop-hint').textContent = hint;
+    $('drop-hint').hidden = !hint;
+    overlay.hidden = false;
+  }
+
+  dropFiles(files) {
+    if (!files.length) return;
+    const pdfs = files.filter(isPdfFile);
+    if (pdfs.length > 1 || (pdfs.length && this.doc && this.organizer.isOpen)) {
+      if (this.doc) this.addFiles(files, this.doc.page_count);
+      else this.assembleFiles(files, { confirmed: true });
+      return;
+    }
+    const file = pdfs[0];
+    if (!file) {
+      toast('Déposez un fichier PDF.', 'error');
+      return;
+    }
+    if (this.state?.app?.mode === 'window') {
+      // La fenêtre transmet le chemin réel (enregistrement sur place) ; sinon, envoi du fichier.
+      clearTimeout(this.pendingDrop?.timer);
+      this.pendingDrop = { file, timer: setTimeout(() => this.uploadDropped(), 900) };
+      return;
+    }
+    this.uploadFile(file);
   }
 
   uploadDropped() {
@@ -1198,11 +1658,12 @@ class App {
     if (pending) this.uploadFile(pending.file);
   }
 
+  // Chemin réel du fichier déposé, transmis par la fenêtre : seulement pour l'ouvrir.
+  // Un dépôt déjà traité ici (ajout de pages, assemblage) n'ouvre rien.
   openDropped(path) {
-    if (this.pendingDrop) {
-      clearTimeout(this.pendingDrop.timer);
-      this.pendingDrop = null;
-    }
+    if (!this.pendingDrop) return;
+    clearTimeout(this.pendingDrop.timer);
+    this.pendingDrop = null;
     this.openPath(path);
   }
 }

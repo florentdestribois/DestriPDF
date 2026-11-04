@@ -1,7 +1,7 @@
 """Impression par le pilote de l'imprimante, comme Acrobat.
 
-DestriPDF a sa propre boîte Imprimer (imprimante, pages, copies, livret) ; son
-bouton « Préférences de l'imprimante » ouvre la fenêtre de réglages du pilote
+DestriPDF a sa propre boîte Imprimer (imprimante, papier, recto verso, pages,
+copies, livret) ; son bouton « Préférences de l'imprimante » ouvre la fenêtre de réglages du pilote
 (`DocumentProperties`) : recto verso, bac, couleur… La boîte d'impression de
 Windows n'est pas utilisée : sur Windows 11 elle est remplacée par une boîte
 moderne qui ne donne pas toujours accès au pilote.
@@ -9,7 +9,9 @@ moderne qui ne donne pas toujours accès au pilote.
 Pages normales : chaque page est rendue par MuPDF (annotations, champs et
 signatures visibles compris) à la résolution de l'imprimante, plafonnée à
 300 ppp, ajustée à la zone imprimable, centrée, et tournée d'un quart de tour
-vers la gauche si son orientation diffère de celle de la feuille.
+vers la gauche si son orientation diffère de celle de la feuille. Le papier
+(A4, A3) et le recto verso choisis dans la boîte Imprimer sont imposés au
+pilote comme ceux du livret : changés s'ils diffèrent, puis relus.
 
 Livret : DestriPDF compose les faces des feuilles (`booklet.py`) et n'utilise
 jamais la fonction Livret de l'imprimante (sur la Canon de l'atelier, elle
@@ -64,6 +66,8 @@ MEDIA = "psk:PageMediaSize"
 ORIENTATION = "psk:PageOrientation"
 DUPLEX_FEATURES = ("psk:JobDuplexAllDocumentsContiguously", "psk:DocumentDuplex")
 DUPLEX_LONG, DUPLEX_SHORT = "psk:TwoSidedLongEdge", "psk:TwoSidedShortEdge"
+# Recto verso de la boîte Imprimer → option du schéma d'impression.
+DUPLEX_MODES = {"simplex": "psk:OneSided", "long": DUPLEX_LONG, "short": DUPLEX_SHORT}
 BIND_FEATURES = ("psk:JobBindAllDocuments", "psk:DocumentBinding")
 STAPLE_FEATURES = ("psk:JobStapleAllDocuments", "psk:DocumentStaple")
 NUP_FEATURES = ("psk:JobNUpAllDocumentsContiguously", "psk:DocumentNUp")
@@ -424,10 +428,27 @@ def duplex_choice(caps: str) -> tuple[str, str] | None:
     return None
 
 
+def duplex_modes(caps: str) -> list[str]:
+    """Recto verso proposé par le pilote : « simplex », « long », « short »."""
+    options = {option for feature in DUPLEX_FEATURES for option in feature_options(caps, feature)}
+    return ["simplex"] + [mode for mode in ("long", "short") if DUPLEX_MODES[mode] in options]
+
+
 def capabilities(name: str) -> dict:
-    """Ce que le livret demande au pilote : formats ordinaires et recto verso."""
+    """Formats ordinaires et recto verso que le pilote propose (livret et pages normales)."""
     caps = capabilities_xml(name)
-    return {"duplex": duplex_choice(caps) is not None, "sheets": [sheet for sheet in SHEET_MEDIA if media_option(caps, sheet)]}
+    return {"duplex": duplex_choice(caps) is not None, "duplex_modes": duplex_modes(caps),
+            "sheets": [sheet for sheet in SHEET_MEDIA if media_option(caps, sheet)]}
+
+
+def current_choice(caps: str, summary: dict) -> dict:
+    """Papier et recto verso des réglages du pilote (`ticket_summary`), dans les
+    termes de la boîte Imprimer : {"sheet": "a4" | "a3" | None, "duplex": …}."""
+    media = summary.get(MEDIA)
+    sheet = next((sheet for sheet in SHEET_MEDIA if media and media == media_option(caps, sheet)), None)
+    option = next((summary[feature] for feature in DUPLEX_FEATURES if feature in summary), None)
+    duplex = next((mode for mode, value in DUPLEX_MODES.items() if value == option), "simplex")
+    return {"sheet": sheet, "duplex": duplex}
 
 
 def ticket_summary(name: str, devmode: bytes) -> dict:
@@ -476,7 +497,7 @@ def apply_ticket(name: str, devmode: bytes, settings: dict) -> bytes:
         merged = queue.MergeAndValidatePrintTicket(base, delta).ValidatedPrintTicket
         return bytes(converter.ConvertPrintTicketToDevMode(merged, interop.BaseDevModeType.UserDefault))
     except Exception as exc:  # noqa: BLE001 - exception .NET
-        raise PrintError(f"Le pilote de « {name} » refuse les réglages du livret.") from exc
+        raise PrintError(f"Le pilote de « {name} » refuse ces réglages d'impression.") from exc
 
 
 def booklet_settings(caps: str, sheet: str) -> dict:
@@ -504,6 +525,27 @@ def booklet_settings(caps: str, sheet: str) -> dict:
     return settings
 
 
+def page_settings(caps: str, sheet: str | None, duplex: str | None) -> dict:
+    """Réglages de pages normales : papier ordinaire (jamais tourné) et recto verso
+    choisis ; None laisse le réglage du pilote. L'orientation reste celle du
+    pilote : `place` tourne les pages qui n'ont pas celle de la feuille."""
+    settings: dict = {}
+    if sheet is not None:
+        media = media_option(caps, sheet)
+        if media is None:
+            raise PrintError(f"L'imprimante ne propose pas le format {SHEET_LABELS[sheet]}.")
+        settings[MEDIA] = media
+    if duplex is not None:
+        wanted = DUPLEX_MODES[duplex]
+        feature = next((f for f in DUPLEX_FEATURES if wanted in feature_options(caps, f)), None)
+        if feature is None:
+            if duplex != "simplex":
+                raise PrintError("L'imprimante n'imprime pas en recto verso.")
+        else:
+            settings[feature] = wanted
+    return settings
+
+
 class PrinterSettings:
     """Réglages du pilote choisis pour chaque imprimante (préférences), gardés
     jusqu'à la fermeture de DestriPDF, comme dans Acrobat."""
@@ -524,22 +566,28 @@ class PrinterSettings:
             self._devmodes[name] = chosen
         return True
 
-    def job_devmode(self, name: str, copies: int = 1) -> bytes:
-        """Réglages pour des pages normales : préférences choisies, copies assemblées."""
-        _sta()
-        with _Printer(name) as printer:
-            devmode = self._devmodes.get(name) or printer.devmode()
-            return printer.devmode(0, set_copies(devmode, copies))  # validé par le pilote
-
-    def booklet_devmode(self, name: str, copies: int, sheet: str) -> tuple[bytes, dict]:
-        """Réglages pour les faces d'un livret, relus dans le pilote : une valeur
-        refusée arrête l'impression (message) au lieu de donner un livret faux.
-        Seuls les réglages qui diffèrent sont changés : avec les réglages par défaut
-        de la Canon (A4 portrait, recto verso bord long), le travail est celui d'un
-        document Word ordinaire. Renvoie aussi les réglages imposés."""
+    def current(self, name: str) -> dict:
+        """Papier et recto verso des réglages en cours (préférences ou défaut du pilote)."""
         _sta()
         caps = capabilities_xml(name)
-        settings = booklet_settings(caps, sheet)
+        with _Printer(name) as printer:
+            devmode = self._devmodes.get(name) or printer.devmode()
+        return current_choice(caps, ticket_summary(name, devmode))
+
+    def job_devmode(self, name: str, copies: int = 1, sheet: str | None = None, duplex: str | None = None) -> bytes:
+        """Réglages pour des pages normales : préférences choisies, papier et recto
+        verso de la boîte Imprimer, copies assemblées."""
+        _sta()
+        if sheet is None and duplex is None:
+            with _Printer(name) as printer:
+                devmode = self._devmodes.get(name) or printer.devmode()
+                return printer.devmode(0, set_copies(devmode, copies))  # validé par le pilote
+        settings = page_settings(capabilities_xml(name), sheet, duplex)
+        return self._tuned(name, copies, settings, "Impression non lancée")
+
+    def _tuned(self, name: str, copies: int, settings: dict, abort: str) -> bytes:
+        """Réglages du pilote changés là où ils diffèrent de `settings`, copies
+        assemblées, puis relus : une valeur refusée arrête l'impression (message)."""
         with _Printer(name) as printer:
             devmode = self._devmodes.get(name) or printer.devmode()
             current = ticket_summary(name, devmode)
@@ -550,8 +598,18 @@ class PrinterSettings:
         obtained = ticket_summary(name, devmode)
         refused = [FEATURE_LABELS.get(feature, feature) for feature, value in settings.items() if obtained.get(feature) != value]
         if refused:
-            raise PrintError(f"Le pilote de « {name} » n'accepte pas : {', '.join(refused)}. Livret non imprimé.")
-        return devmode, settings
+            raise PrintError(f"Le pilote de « {name} » n'accepte pas : {', '.join(refused)}. {abort}.")
+        return devmode
+
+    def booklet_devmode(self, name: str, copies: int, sheet: str) -> tuple[bytes, dict]:
+        """Réglages pour les faces d'un livret, relus dans le pilote : une valeur
+        refusée arrête l'impression (message) au lieu de donner un livret faux.
+        Seuls les réglages qui diffèrent sont changés : avec les réglages par défaut
+        de la Canon (A4 portrait, recto verso bord long), le travail est celui d'un
+        document Word ordinaire. Renvoie aussi les réglages imposés."""
+        _sta()
+        settings = booklet_settings(capabilities_xml(name), sheet)
+        return self._tuned(name, copies, settings, "Livret non imprimé"), settings
 
 
 # --- Envoi au pilote ---
@@ -661,15 +719,19 @@ class WindowsPrinting:
         return list_printers()
 
     def capabilities(self, name: str) -> dict:
+        """Capacités du pilote, et papier et recto verso en cours (`current`)."""
         _sta()
-        return capabilities(name)
+        return {**capabilities(name), "current": self.settings.current(name)}
 
     def preferences(self, owner: int, name: str) -> bool:
         return self.settings.preferences(owner, name)
 
     def print_document(self, name: str, copies: int, title: str, pages: list[int],
-                       page_size, render, output: str | None = None) -> None:
-        hdc = create_dc(name, self.settings.job_devmode(name, copies))
+                       page_size, render, output: str | None = None,
+                       sheet: str | None = None, duplex: str | None = None) -> None:
+        """`sheet` (« a4 », « a3 ») et `duplex` (« simplex », « long », « short ») :
+        choix de la boîte Imprimer ; None garde le réglage du pilote."""
+        hdc = create_dc(name, self.settings.job_devmode(name, copies, sheet, duplex))
         print_pages(hdc, title, pages, page_size, render, output=output)
 
     def print_booklet(self, name: str, copies: int, title: str, sheet: str, impose, render_face,

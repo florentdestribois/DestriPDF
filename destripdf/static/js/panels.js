@@ -2,6 +2,7 @@
 
 import { Api } from './api.js';
 import { el, iconEl, toast, modal, busy, formatDate, showMenu, promptModal } from './ui.js';
+import { PageSorter } from './pagesorter.js';
 
 const THUMB_W = 132;
 
@@ -12,10 +13,20 @@ export class Sidebar {
     this.thumbs = document.getElementById('thumbs');
     this.toc = document.getElementById('toc');
     this.items = [];
-    this.dragFrom = null;
     this.io = new IntersectionObserver((entries) => {
       for (const entry of entries) if (entry.isIntersecting) this.loadThumb(Number(entry.target.dataset.index));
     }, { root: this.thumbs, rootMargin: '300px 0px' });
+    // Mêmes gestes que la vue « Organiser » : Ctrl+clic, Maj+clic, glisser plusieurs pages,
+    // PDF déposés entre deux vignettes.
+    this.sorter = new PageSorter(this.thumbs, app.pageSelection, {
+      layout: 'list',
+      item: '.thumb',
+      onActivate: (index) => this.app.viewer.scrollToPage(index),
+      onMove: (pages, before) => this.app.movePagesTo(pages, before),
+      onFiles: (files, before) => this.app.addFiles(files, before),
+      onDelete: (pages) => this.app.deletePages(pages),
+      onContext: (index, node, pages) => this.contextMenu(index, node, pages),
+    });
     const tabPages = document.getElementById('tab-pages');
     const tabToc = document.getElementById('tab-toc');
     const select = (pages) => {
@@ -26,7 +37,7 @@ export class Sidebar {
     };
     tabPages.addEventListener('click', () => select(true));
     tabToc.addEventListener('click', () => select(false));
-    document.getElementById('btn-insert').addEventListener('click', () => this.app.insertPdf(this.app.doc ? this.app.doc.page_count : 0));
+    document.getElementById('btn-insert').addEventListener('click', () => this.app.addPdfs(this.app.doc ? this.app.doc.page_count : 0));
   }
 
   setVisible(visible) {
@@ -43,69 +54,38 @@ export class Sidebar {
       const width = info.w >= info.h ? THUMB_W : Math.round(THUMB_W * 0.82);
       const height = Math.round(width * ratio);
       const img = el('img', { class: 'thumb-img', alt: '', width: String(width), height: String(height), draggable: 'false' });
-      const item = el('div', { class: 'thumb', tabindex: '0', role: 'button', draggable: 'true', dataset: { index: String(index) }, 'aria-label': `Page ${index + 1}` },
+      // Clic, clavier, menu contextuel et glisser : PageSorter (sélection partagée).
+      const item = el('div', { class: 'thumb', tabindex: '-1', role: 'option', 'aria-selected': 'false', draggable: 'true', dataset: { index: String(index) }, 'aria-label': `Page ${index + 1}` },
         img, el('span', { class: 'thumb-num', text: String(index + 1) }));
       const actions = el('div', { class: 'thumb-actions' });
       const rotate = el('button', { class: 'icon-btn', type: 'button', 'data-tip': 'Pivoter à droite' }, iconEl('rotate'), el('span', { class: 'sr-only', text: 'Pivoter' }));
-      rotate.addEventListener('click', (e) => { e.stopPropagation(); this.app.rotatePages([index], 90); });
+      rotate.addEventListener('click', () => this.app.rotatePages([index], 90));
       const remove = el('button', { class: 'icon-btn', type: 'button', 'data-tip': 'Supprimer la page' }, iconEl('trash'), el('span', { class: 'sr-only', text: 'Supprimer la page' }));
-      remove.addEventListener('click', (e) => { e.stopPropagation(); this.app.deletePages([index]); });
+      remove.addEventListener('click', () => this.app.deletePages([index]));
       actions.append(rotate, remove);
       item.append(actions);
-      item.addEventListener('click', () => this.app.viewer.scrollToPage(index));
-      item.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.app.viewer.scrollToPage(index); }
-        if (e.key === 'Delete') {
-          // La touche ne concerne que la page : jamais l'annotation sélectionnée.
-          e.preventDefault();
-          e.stopPropagation();
-          this.app.deletePages([index]);
-        }
-      });
-      item.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        showMenu(item, [
-          { label: 'Pivoter à droite', icon: 'rotate', action: () => this.app.rotatePages([index], 90) },
-          { label: 'Pivoter à gauche', icon: 'rotateLeft', action: () => this.app.rotatePages([index], -90) },
-          '-',
-          { label: 'Insérer un PDF avant', icon: 'insert', action: () => this.app.insertPdf(index) },
-          { label: 'Insérer un PDF après', icon: 'insert', action: () => this.app.insertPdf(index + 1) },
-          '-',
-          { label: 'Supprimer la page', icon: 'trash', action: () => this.app.deletePages([index]) },
-        ]);
-      });
-      item.addEventListener('dragstart', (e) => { this.dragFrom = index; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(index)); });
-      item.addEventListener('dragover', (e) => {
-        if (this.dragFrom === null) return;
-        e.preventDefault();
-        const rect = item.getBoundingClientRect();
-        const after = e.clientY > rect.top + rect.height / 2;
-        this.clearDrop();
-        item.classList.add(after ? 'drop-after' : 'drop-before');
-      });
-      item.addEventListener('dragleave', () => item.classList.remove('drop-before', 'drop-after'));
-      item.addEventListener('drop', (e) => {
-        if (this.dragFrom === null) return;
-        e.preventDefault();
-        const after = item.classList.contains('drop-after');
-        this.clearDrop();
-        const from = this.dragFrom;
-        this.dragFrom = null;
-        let to = after ? index + 1 : index;
-        if (to > from) to -= 1;
-        if (to !== from) this.app.movePage(from, to);
-      });
-      item.addEventListener('dragend', () => { this.dragFrom = null; this.clearDrop(); });
       this.thumbs.append(item);
       this.io.observe(item);
       return { item, img, v: -1, info, width };
     });
     this.renderToc(doc);
+    this.sorter.paint();
     this.setCurrent(this.app.viewer.current);
   }
 
-  clearDrop() {
-    this.thumbs.querySelectorAll('.drop-before, .drop-after').forEach((n) => n.classList.remove('drop-before', 'drop-after'));
+  contextMenu(index, node, pages) {
+    const many = pages.length > 1;
+    const count = many ? ` (${pages.length} pages)` : '';
+    showMenu(node, [
+      { label: `Pivoter à droite${count}`, icon: 'rotate', action: () => this.app.rotatePages(pages, 90) },
+      { label: `Pivoter à gauche${count}`, icon: 'rotateLeft', action: () => this.app.rotatePages(pages, -90) },
+      '-',
+      { label: 'Insérer des PDF avant', icon: 'insert', action: () => this.app.addPdfs(pages[0]) },
+      { label: 'Insérer des PDF après', icon: 'insert', action: () => this.app.addPdfs(pages[pages.length - 1] + 1) },
+      { label: 'Organiser les pages…', icon: 'grid', action: () => this.app.organizer.open() },
+      '-',
+      { label: many ? `Supprimer${count}` : 'Supprimer la page', icon: 'trash', action: () => this.app.deletePages(pages) },
+    ]);
   }
 
   loadThumb(index) {

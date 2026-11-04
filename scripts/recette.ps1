@@ -34,7 +34,7 @@ Start-Sleep -Seconds 3
 
 $failed = 0
 try {
-    foreach ($scenario in 'parcours_edition.py', 'parcours_complements.py') {
+    foreach ($scenario in 'parcours_edition.py', 'parcours_complements.py', 'parcours_assemblage.py') {
         Write-Host "== $scenario"
         & $python -X utf8 (Join-Path $root "scripts\recette\$scenario") $out $samples
         if ($LASTEXITCODE -ne 0) { $failed += 1 }

@@ -4,6 +4,7 @@ import hashlib
 import http.client
 import json
 import time
+from pathlib import Path
 
 import pymupdf as fitz
 import pytest
@@ -179,7 +180,7 @@ def test_print_routes(server, tmp_path):
     from destripdf.printing import PrintError
 
     class Printing:
-        jobs, prefs, booklets = [], [], []
+        jobs, prefs, booklets, paper = [], [], [], []
         fail = None
 
         def printers(self):
@@ -192,11 +193,12 @@ def test_print_routes(server, tmp_path):
             Printing.prefs.append((owner, name))
             return True
 
-        def print_document(self, name, copies, title, pages, page_size, render, output=None):
+        def print_document(self, name, copies, title, pages, page_size, render, output=None, sheet=None, duplex=None):
             if Printing.fail:
                 raise Printing.fail
             assert render(pages[0], 0.1, 0)[1] > 0  # le rendu du document est bien transmis
             Printing.jobs.append((name, copies, title, pages, output))
+            Printing.paper.append((sheet, duplex))
 
         def print_booklet(self, name, copies, title, sheet, impose, render_face, upside_down_backs=False, output=None):
             if Printing.fail:
@@ -237,13 +239,26 @@ def test_print_routes(server, tmp_path):
     assert request(server, "POST", "api/print", {"printer": "Bureau", "layout": "poster"})[1]["code"] == "bad_layout"
     assert request(server, "POST", "api/print", {"printer": "Atelier", "layout": "booklet", "sheet": "a5"})[1]["code"] == "bad_sheet"
     assert request(server, "POST", "api/print", {"printer": "Atelier", "layout": "booklet", "binding": "haut"})[1]["code"] == "bad_binding"
+    assert request(server, "POST", "api/print", {"printer": "Bureau", "sheet": "a5"})[1]["code"] == "bad_sheet"
+    assert request(server, "POST", "api/print", {"printer": "Bureau", "sheet": ["a4"]})[1]["code"] == "bad_sheet"
+    assert request(server, "POST", "api/print", {"printer": "Bureau", "duplex": "both"})[1]["code"] == "bad_duplex"
+    assert request(server, "POST", "api/print", {"printer": "Bureau", "duplex": 1})[1]["code"] == "bad_duplex"
     assert Printing.jobs == [] and Printing.booklets == []
     # préférences du pilote, ouvertes au-dessus de la fenêtre
     status, data = request(server, "POST", "api/print/preferences", {"printer": "Bureau"})
     assert status == 200 and data == {"changed": True} and Printing.prefs == [(4242, "Bureau")]
     status, data = request(server, "POST", "api/print", {"printer": "Bureau", "pages": "all", "copies": 2})
-    assert status == 200 and data == {"pages": 2, "copies": 2, "layout": "normal"}
+    assert status == 200 and data == {"pages": 2, "copies": 2, "layout": "normal", "sheet": None, "duplex": None}
     assert Printing.jobs[-1] == ("Bureau", 2, "devis.pdf", [0, 1], None)
+    assert Printing.paper[-1] == (None, None)  # sans choix : réglages du pilote
+    # papier et recto verso de la boîte Imprimer transmis au pilote
+    status, data = request(server, "POST", "api/print", {"printer": "Atelier", "sheet": "a3", "duplex": "long"})
+    assert status == 200 and data["sheet"] == "a3" and data["duplex"] == "long"
+    assert Printing.paper[-1] == ("a3", "long")
+    request(server, "POST", "api/print", {"printer": "Atelier", "sheet": "a4", "duplex": "simplex"})
+    request(server, "POST", "api/print", {"printer": "Atelier", "duplex": "short"})
+    assert Printing.paper[-2:] == [("a4", "simplex"), (None, "short")]
+    del Printing.jobs[-3:]
     request(server, "POST", "api/print", {"printer": "Bureau", "pages": "current", "current": 1})
     request(server, "POST", "api/print", {"printer": "Bureau", "pages": "2, 1-1"})
     assert [job[3] for job in Printing.jobs[1:]] == [[1], [1, 0]]
@@ -305,6 +320,201 @@ def test_export_jpeg(server, tmp_path):
     assert request(server, "POST", "api/export-jpeg", {"page": 9, "path": str(tmp_path / "x.jpg")})[0] == 400
     # mode navigateur, sans dialogue Windows : le chemin est exigé
     assert request(server, "POST", "api/export-jpeg", {"scope": "all"})[0] == 409
+
+
+def _bundle(*files):
+    """Corps et requête d'un envoi de plusieurs PDF bout à bout (comme l'interface)."""
+    from urllib.parse import quote
+
+    names = quote(json.dumps([name for name, _ in files]))
+    sizes = ",".join(str(len(data)) for _, data in files)
+    return b"".join(data for _, data in files), f"sizes={sizes}&names={names}"
+
+
+def _first_lines(server, count):
+    lines = []
+    for page in range(count):
+        status, text = request(server, "GET", f"api/page/{page}/text")
+        lines.append(text["lines"][0]["text"])
+    return lines
+
+
+def test_assembly_and_page_order_routes(server, tmp_path):
+    body, query = _bundle(("02 - plan.pdf", samples.other_pdf(2, "Plan")), ("cctp.pdf", samples.other_pdf(1, "CCTP")))
+    # sans document : rien à insérer ni à déplacer
+    assert request(server, "POST", f"api/pages/insert-upload?{query}", body)[0] == 409
+    assert request(server, "POST", "api/pages/move-many", {"pages": [0], "before": 1})[0] == 409
+    # garde-fous : sans en-tête applicatif ou depuis une autre origine, rien n'est créé
+    assert request(server, "POST", f"api/assemble-upload?{query}", body, headers={"X-DestriPDF": "0"})[0] == 403
+    assert request(server, "POST", f"api/assemble-upload?{query}", body, headers={"Origin": "http://evil.example"})[0] == 403
+    assert request(server, "GET", "api/state")[1]["doc"] is None
+    # envoi incohérent, trop de fichiers, PDF illisible : refus
+    assert request(server, "POST", "api/assemble-upload?sizes=10,20", body)[1]["code"] == "bad_request"
+    assert request(server, "POST", "api/assemble-upload?sizes=a", body)[1]["code"] == "bad_request"
+    assert request(server, "POST", f"api/assemble-upload?sizes={len(body)}&names=%7B", body)[1]["code"] == "bad_request"
+    assert request(server, "POST", "api/assemble-upload?sizes=" + ",".join(["1"] * 101), b"x" * 101)[1]["code"] == "too_many"
+    bad_body, bad_query = _bundle(("plan.pdf", samples.other_pdf(1)), ("note.pdf", b"pas un pdf"))
+    status, data = request(server, "POST", f"api/assemble-upload?{bad_query}", bad_body)
+    assert status == 400 and data["code"] == "not_pdf" and "« note.pdf »" in data["error"]
+
+    # assemblage : nouveau document sans fichier, à enregistrer, signet par fichier
+    status, data = request(server, "POST", f"api/assemble-upload?{query}", body)
+    assert status == 200, data
+    doc = data["doc"]
+    assert data["assembled"] == 2 and data["signed_sources"] == []
+    assert doc["name"] == "02 - plan - assemblé.pdf" and doc["path"] is None and doc["dirty"] and doc["page_count"] == 3
+    assert doc["toc"] == [[1, "02 - plan", 0], [1, "cctp", 2]]
+    assert request(server, "POST", "api/save")[1]["code"] == "need_path"
+
+    # ajout de deux PDF en tête, en une seule étape d'annulation ; noms réduits à leur nom de fichier
+    body2, query2 = _bundle(("C:\\dossier\\devis.pdf", samples.quote_pdf()), ("annexe.pdf", samples.other_pdf(1)))
+    status, data = request(server, "POST", f"api/pages/insert-upload?at=0&{query2}", body2)
+    assert status == 200, data
+    assert data["inserted"] == {"start": 0, "count": 3, "files": 2} and data["doc"]["page_count"] == 6
+    assert data["doc"]["undo_label"] == "Insertion de 2 PDF"
+    assert _first_lines(server, 6) == ["DEVIS DEV-2026-042", "Conditions générales — page 2", "Annexe 1", "Plan 1", "Plan 2", "CCTP 1"]
+    assert request(server, "POST", "api/undo")[1]["doc"]["page_count"] == 3
+    assert request(server, "POST", "api/redo")[1]["doc"]["page_count"] == 6
+    # un seul PDF sans « sizes » (ancien envoi) ; position invalide refusée
+    assert request(server, "POST", "api/pages/insert-upload", samples.other_pdf(1, "Fin"))[1]["inserted"]["start"] == 6
+    assert request(server, "POST", "api/pages/insert-upload?at=x", samples.other_pdf(1))[1]["code"] == "bad_page"
+    status, data = request(server, "POST", f"api/pages/insert-upload?{bad_query}", bad_body)
+    assert status == 400 and data["code"] == "not_pdf" and data.get("doc") is None
+    assert request(server, "GET", "api/state")[1]["doc"]["page_count"] == 7
+
+    # déplacement de plusieurs pages : les annexes « Plan » avant le devis
+    assert request(server, "POST", "api/pages/move-many", {"pages": [4, 3], "before": 0}, headers={"X-DestriPDF": "0"})[0] == 403
+    status, data = request(server, "POST", "api/pages/move-many", {"pages": [4, 3], "before": 0})
+    assert status == 200 and data["moved"] == {"start": 0, "count": 2}
+    assert data["doc"]["undo_label"] == "Déplacement de pages"
+    assert _first_lines(server, 4) == ["Plan 1", "Plan 2", "DEVIS DEV-2026-042", "Conditions générales — page 2"]
+    version = data["doc"]["version"]
+    # déjà à leur place : aucune modification
+    status, data = request(server, "POST", "api/pages/move-many", {"pages": [0, 1], "before": 2})
+    assert status == 200 and data["doc"]["version"] == version
+    for bad, code in (({"pages": [], "before": 0}, "empty"), ({"pages": "1", "before": 0}, "empty"),
+                      ({"pages": [9], "before": 0}, "bad_page"), ({"pages": [0], "before": 99}, "bad_page"),
+                      ({"pages": [0]}, "bad_request")):
+        assert request(server, "POST", "api/pages/move-many", bad)[1]["code"] == code, bad
+
+    # enregistrer sous : le document assemblé devient un fichier
+    target = tmp_path / "dossier.pdf"
+    status, data = request(server, "POST", "api/save-as", {"path": str(target)})
+    assert status == 200 and not data["doc"]["dirty"] and fitz.open(target).page_count == 7
+
+
+def test_files_are_sorted_like_explorer():
+    from destripdf.server import sort_like_explorer
+
+    names = ["plan 10.pdf", "Étude thermique.pdf", "Plan 2.pdf", "Devis.pdf", "Électricité.pdf"]
+    assert [Path(p).name for p in sort_like_explorer([f"C:\\dossier\\{n}" for n in names])] == [
+        "Devis.pdf", "Électricité.pdf", "Étude thermique.pdf", "Plan 2.pdf", "plan 10.pdf"]
+
+
+def test_assembly_dialog_routes(server, tmp_path):
+    files, written = {}, {}
+    for name, data in (("10 - annexe.pdf", samples.other_pdf(1, "Annexe")), ("2 - plan.pdf", samples.other_pdf(1, "Plan")),
+                       ("1 - devis.pdf", samples.quote_pdf())):
+        files[name] = tmp_path / name
+        files[name].write_bytes(data)
+        written[name] = data
+
+    class Dialogs:
+        chosen = []
+        saved = []
+
+        def open_pdfs(self, directory):
+            return list(Dialogs.chosen)
+
+        def save_pdf(self, directory, filename):
+            Dialogs.saved.append((directory, filename))
+            return None
+
+    # mode navigateur : pas de dialogue Windows
+    assert request(server, "POST", "api/dialog/open-pdfs")[1]["code"] == "no_dialog"
+    server.app.dialogs = Dialogs()
+    assert request(server, "POST", "api/dialog/open-pdfs", headers={"X-DestriPDF": "0"})[0] == 403
+    Dialogs.chosen = []
+    assert request(server, "POST", "api/dialog/open-pdfs")[1] == {"cancelled": True}
+    # rangés par nom comme dans l'Explorateur : 1, 2 puis 10
+    Dialogs.chosen = [str(files["10 - annexe.pdf"]), str(files["2 - plan.pdf"]), str(files["1 - devis.pdf"])]
+    status, data = request(server, "POST", "api/dialog/open-pdfs")
+    assert status == 200 and [Path(p).name for p in data["paths"]] == ["1 - devis.pdf", "2 - plan.pdf", "10 - annexe.pdf"]
+    # assemblage des fichiers choisis : refus sans chemin, fichier disparu, sans en-tête
+    assert request(server, "POST", "api/assemble-files", {"paths": []})[1]["code"] == "empty"
+    assert request(server, "POST", "api/assemble-files", {"paths": [1]})[1]["code"] == "empty"
+    assert request(server, "POST", "api/assemble-files", {"paths": [str(tmp_path / "absent.pdf")]})[1]["code"] == "not_found"
+    assert request(server, "POST", "api/assemble-files", {"paths": ["x.pdf"] * 101})[1]["code"] == "too_many"
+    assert request(server, "POST", "api/assemble-files", {"paths": data["paths"]}, headers={"X-DestriPDF": "0"})[0] == 403
+    assert request(server, "GET", "api/state")[1]["doc"] is None
+    status, data = request(server, "POST", "api/assemble-files", {"paths": data["paths"]})
+    assert status == 200, data
+    assert data["doc"]["name"] == "1 - devis - assemblé.pdf" and data["doc"]["dirty"]
+    assert [entry[1] for entry in data["doc"]["toc"]] == ["1 - devis", "2 - plan", "10 - annexe"]
+    # les sources ne changent pas ; « Enregistrer sous » propose leur dossier
+    assert all(files[name].read_bytes() == content for name, content in written.items())
+    assert request(server, "POST", "api/dialog/save-pdf", {"name": "..\\dossier.pdf"})[1] == {"cancelled": True}
+    assert Dialogs.saved == [(str(tmp_path), "dossier.pdf")]
+    status, data = request(server, "POST", "api/pages/insert-files", {"paths": [str(files["2 - plan.pdf"])], "at": 1})
+    assert status == 200 and data["inserted"] == {"start": 1, "count": 1, "files": 1}
+    assert request(server, "POST", "api/pages/insert-files", {"paths": [str(files["2 - plan.pdf"])], "at": "x"})[1]["code"] == "bad_page"
+    assert request(server, "POST", "api/pages/insert-files", {"paths": [str(tmp_path / "absent.pdf")]})[1]["code"] == "not_found"
+    assert request(server, "GET", "api/state")[1]["doc"]["page_count"] == 5
+
+
+def test_compress_routes(server, tmp_path):
+    from destripdf.document import PdfSession
+
+    assert request(server, "GET", "api/compress/estimate?level=screen")[0] == 409
+    source = tmp_path / "chantier.pdf"
+    original = samples.photo_pdf(400)
+    source.write_bytes(original)
+    assert request(server, "POST", "api/open", {"path": str(source)})[0] == 200
+    assert request(server, "GET", "api/compress/estimate?level=extreme")[1]["code"] == "bad_level"
+    status, data = request(server, "GET", "api/compress/estimate?level=screen")
+    assert status == 200 and data["before"] == len(original) and data["after"] < len(original) / 4
+    # garde-fous : rien n'est écrit sans en-tête applicatif
+    target = tmp_path / "chantier - compressé.pdf"
+    assert request(server, "POST", "api/compress/save", {"level": "screen", "path": str(target)}, headers={"X-DestriPDF": "0"})[0] == 403
+    assert not target.exists()
+    # sans chemin (dialogue annulé ou chemin non saisi) : refus explicite
+    assert request(server, "POST", "api/compress/save", {"level": "screen"})[1]["code"] == "need_path"
+    assert request(server, "POST", "api/compress/save", {"level": "fort", "path": str(target)})[1]["code"] == "bad_level"
+    status, data = request(server, "POST", "api/compress/save", {"level": "screen", "path": str(target)})
+    assert status == 200 and "doc" not in data and data["after"] == target.stat().st_size < len(original)
+    assert "Photo du chantier" in fitz.open(target)[0].get_text()
+    assert source.read_bytes() == original  # l'original reste intact
+    # dialogue Windows : nom proposé dans le dossier du document
+    proposed = []
+
+    class Dialogs:
+        def save_pdf(self, directory, filename):
+            proposed.append((directory, filename))
+            return str(source)
+
+    assert request(server, "POST", "api/dialog/save-pdf", {"name": "chantier - compressé.pdf"})[1]["code"] == "no_dialog"
+    server.app.dialogs = Dialogs()
+    assert request(server, "POST", "api/dialog/save-pdf", {"name": "chantier - compressé.pdf"})[1] == {"path": str(source)}
+    assert proposed == [(str(tmp_path), "chantier - compressé.pdf")]
+    # fichier du document remplacé par sa version compressée : le document ouvert la reprend
+    status, data = request(server, "POST", "api/compress/save", {"level": "minimum", "path": str(source)})
+    assert status == 200 and data["doc"]["path"] == str(source) and not data["doc"]["dirty"]
+    assert source.stat().st_size == data["after"] < target.stat().st_size
+    # aucun gain : rien n'est écrit
+    session = server.app.session
+    session.compressed_bytes = lambda level: b"%PDF" + b"0" * (len(session.original) + 10)
+    server.app.compressed = {"key": None, "levels": {}, "before": None}
+    status, data = request(server, "POST", "api/compress/save", {"level": "print", "path": str(tmp_path / "rien.pdf")})
+    assert status == 400 and data["code"] == "no_gain" and not (tmp_path / "rien.pdf").exists()
+    # document signé : refus, la compression invaliderait ses signatures
+    identity = server.identity
+    signed, _ = pades.sign_pdf(original, pades.SignOptions(thumbprint=hashlib.sha1(identity.der).hexdigest()),
+                               store_factory=lambda: wincert.CertStore.from_pfx(identity.pfx, PFX_PASSWORD))
+    (tmp_path / "signé.pdf").write_bytes(signed)
+    assert request(server, "POST", "api/open", {"path": str(tmp_path / "signé.pdf")})[0] == 200
+    status, data = request(server, "GET", "api/compress/estimate?level=screen")
+    assert status == 400 and data["code"] == "signed"
+    assert isinstance(server.app.session, PdfSession)
 
 
 def test_password_flow(server, tmp_path):

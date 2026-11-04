@@ -390,6 +390,15 @@ export class Viewer extends EventTarget {
     this.dispatchEvent(new CustomEvent('pagechange', { detail: { index } }));
   }
 
+  // La page est-elle, au moins en partie, dans la zone visible ?
+  isOnScreen(index) {
+    const view = this.views[index];
+    if (!view) return false;
+    const top = this.offsets[index];
+    const bottom = top + Math.round(view.h * this.scale);
+    return bottom > this.scroller.scrollTop && top < this.scroller.scrollTop + this.scroller.clientHeight;
+  }
+
   scrollToRect(index, rect) {
     const view = this.views[index];
     if (!view) return;

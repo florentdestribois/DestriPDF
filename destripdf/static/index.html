@@ -27,9 +27,10 @@
 
 <nav class="toolbar needs-doc-area" id="toolbar" aria-label="Outils">
   <button class="icon-btn" id="btn-sidebar" type="button" aria-pressed="true" data-tip="Vignettes des pages"><span class="ico" data-icon="sidebar"></span><span class="sr-only">Vignettes des pages</span></button>
+  <button class="tool" id="btn-organize" type="button" aria-pressed="false" data-tip="Organiser les pages : assembler des PDF, déplacer, pivoter, supprimer"><span class="ico" data-icon="grid"></span><span class="tool-label">Organiser</span></button>
   <div class="toolbar-sep"></div>
   <div class="tool-group" role="toolbar" aria-label="Outils d'édition" id="tools"></div>
-  <div class="toolbar-sep"></div>
+  <div class="toolbar-sep tools-sep"></div>
   <div class="tool-group">
     <button class="icon-btn" id="btn-undo" type="button" disabled><span class="ico" data-icon="undo"></span><span class="sr-only">Annuler</span></button>
     <button class="icon-btn" id="btn-redo" type="button" disabled><span class="ico" data-icon="redo"></span><span class="sr-only">Rétablir</span></button>
@@ -54,7 +55,7 @@
     <div class="sidebar-body" id="thumbs" role="tabpanel" aria-labelledby="tab-pages"></div>
     <div class="sidebar-body" id="toc" role="tabpanel" aria-labelledby="tab-toc" hidden></div>
     <div class="sidebar-foot">
-      <button class="btn btn-ghost btn-sm" id="btn-insert" type="button"><span class="ico" data-icon="insert"></span><span>Insérer un PDF</span></button>
+      <button class="btn btn-ghost btn-sm" id="btn-insert" type="button" data-tip="Ajouter des PDF à la fin (ou déposez-les entre deux vignettes)"><span class="ico" data-icon="addFiles"></span><span>Ajouter des PDF</span></button>
     </div>
   </aside>
 
@@ -72,18 +73,25 @@
       <button class="zoom-value" id="zoom-value" type="button" aria-haspopup="menu" aria-expanded="false" data-tip="Niveau de zoom">100 %</button>
       <button class="icon-btn" id="btn-zoom-in" type="button" data-tip="Zoom avant (Ctrl +)"><span class="ico" data-icon="plus"></span><span class="sr-only">Zoom avant</span></button>
     </div>
+    <section class="organizer" id="organizer" hidden aria-label="Organiser les pages">
+      <div class="org-bar" id="org-bar"></div>
+      <div class="org-scroll" id="org-scroll">
+        <div class="org-grid" id="org-grid" role="listbox" aria-multiselectable="true" aria-label="Pages du document"></div>
+      </div>
+    </section>
     <div class="start" id="start" hidden>
       <div class="start-card">
         <h1 class="start-title">Ouvrir un document</h1>
-        <p class="start-lead">Lire, modifier le texte, annoter et signer avec votre clé.</p>
+        <p class="start-lead">Lire, modifier le texte, annoter, assembler et signer avec votre clé.</p>
         <div class="dropzone" id="dropzone">
           <button class="btn btn-primary" id="start-open" type="button"><span class="ico" data-icon="open"></span><span>Choisir un PDF</span></button>
-          <span class="dropzone-hint">ou glissez un fichier PDF ici</span>
+          <button class="btn btn-secondary" id="start-assemble" type="button"><span class="ico" data-icon="merge"></span><span>Assembler des PDF</span></button>
+          <span class="dropzone-hint">ou glissez un ou plusieurs PDF ici</span>
         </div>
         <div class="recent" id="recent"></div>
       </div>
     </div>
-    <div class="drop-overlay" id="drop-overlay" hidden><span>Déposez le PDF pour l'ouvrir</span></div>
+    <div class="drop-overlay" id="drop-overlay" hidden><span class="drop-title" id="drop-title">Déposez le PDF pour l'ouvrir</span><span class="drop-hint" id="drop-hint"></span></div>
   </section>
 
   <aside class="panel" id="panel" hidden aria-label="Panneau">
@@ -96,7 +104,8 @@
 </main>
 
 <input type="file" id="file-input" accept="application/pdf,.pdf" hidden>
-<input type="file" id="insert-input" accept="application/pdf,.pdf" hidden>
+<input type="file" id="insert-input" accept="application/pdf,.pdf" multiple hidden>
+<input type="file" id="assemble-input" accept="application/pdf,.pdf" multiple hidden>
 <div class="print-root" id="print-root" aria-hidden="true"></div>
 <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
 <div class="modal-root" id="modal-root"></div>

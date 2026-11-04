@@ -53,6 +53,10 @@ const ICONS = {
   alignRight: P('M4 6h16M10 10h10M4 14h16M10 18h10'),
   file: P('M7 3h7l5 5v13H7z') + P('M14 3v5h5'),
   pages: '<rect x="6.5" y="3.5" width="11" height="14" rx="1"/>' + P('M4 7v13h11'),
+  grid: '<rect x="4" y="4" width="6.5" height="7" rx="1"/><rect x="13.5" y="4" width="6.5" height="7" rx="1"/><rect x="4" y="13.5" width="6.5" height="7" rx="1"/><rect x="13.5" y="13.5" width="6.5" height="7" rx="1"/>',
+  addFiles: P('M9 3.5h6l4 4V17H9z') + P('M15 3.5v4h4') + P('M5.5 7v13.5H15') + P('M14 10.5v4M12 12.5h4'),
+  merge: '<rect x="3.5" y="4" width="7" height="9" rx="1"/><rect x="13.5" y="4" width="7" height="9" rx="1"/>' + P('M7 13v2.5a2 2 0 0 0 2 2h1.5M17 13v2.5a2 2 0 0 1-2 2h-1.5M12 17.5V21'),
+  compress: P('M7 3h7l5 5v13H7z') + P('M14 3v5h5') + P('M13 10v3.5l-1.5-1.5M13 13.5l1.5-1.5M13 19.5V16l-1.5 1.5M13 16l1.5 1.5'),
 };
 
 export function icon(name) {
@@ -250,7 +254,8 @@ export function showMenu(anchor, items) {
   const width = menu.offsetWidth;
   const left = Math.min(Math.max(8, rect.right - width), window.innerWidth - width - 8);
   menu.style.left = `${left}px`;
-  menu.style.top = `${Math.min(rect.bottom + 6, window.innerHeight - menu.offsetHeight - 8)}px`;
+  // Menu plus haut que la fenêtre : il défile (max-height), jamais coupé en haut.
+  menu.style.top = `${Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - menu.offsetHeight - 8))}px`;
   anchor.setAttribute('aria-expanded', 'true');
   const onDown = (event) => { if (!menu.contains(event.target) && event.target !== anchor) closeMenu(); };
   const onKey = (event) => {
@@ -319,4 +324,17 @@ export function formatDate(iso, withTime = true) {
 
 export function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+// Taille de fichier comme l'Explorateur : « 850 Ko », « 12,4 Mo ».
+export function formatSize(bytes) {
+  const units = ['octets', 'Ko', 'Mo', 'Go'];
+  let value = Math.max(0, Number(bytes) || 0);
+  let unit = 0;
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const digits = unit === 0 || value >= 100 ? 0 : 1;
+  return `${value.toLocaleString('fr-FR', { maximumFractionDigits: digits, minimumFractionDigits: digits })} ${units[unit]}`;
 }

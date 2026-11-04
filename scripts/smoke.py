@@ -81,7 +81,8 @@ def main(base: str, workdir: str) -> int:
 
     status, body, ctype = c.call("GET", "", raw=True)
     check("page d'accueil", status == 200 and b"DestriPDF" in body)
-    for asset in ("static/app.css", "static/js/app.js", "static/fonts/Roboto-Regular.ttf", "static/icon.svg"):
+    for asset in ("static/app.css", "static/js/app.js", "static/js/organizer.js", "static/js/pagesorter.js",
+                  "static/fonts/Roboto-Regular.ttf", "static/icon.svg"):
         status, body, ctype = c.call("GET", asset, raw=True)
         check(f"ressource {asset}", status == 200 and len(body) > 100, f"{status}")
     status, data = c.call("POST", "api/open", {"path": str(work / "devis.pdf")})
@@ -161,6 +162,22 @@ def main(base: str, workdir: str) -> int:
         check("vérification de la signature", bool(reports) and reports[0]["intact"] and reports[0]["valid"], str(reports)[:300])
         if authority is not None:
             check("signature vérifiable hors ligne (LTV)", bool(reports) and reports[0].get("ltv") is True, str(reports)[:300])
+    # Assemblage, déplacement de plusieurs pages, compression (rééchantillonnage des
+    # images de MuPDF embarqué) : en dernier, le document ouvert change.
+    lot = work / "lot"
+    if lot.is_dir():
+        status, data = c.call("POST", "api/assemble-files", {"paths": [str(p) for p in sorted(lot.glob("*.pdf"))]})
+        doc = data.get("doc", {}) if isinstance(data, dict) else {}
+        check("assemblage de PDF (nouveau document)", status == 200 and doc.get("page_count") == 6 and doc.get("dirty"), str(data)[:200])
+        status, data = c.call("POST", "api/pages/move-many", {"pages": [4, 5], "before": 0})
+        check("déplacement de plusieurs pages", status == 200 and data.get("moved") == {"start": 0, "count": 2}, str(data)[:200])
+    if (work / "chantier.pdf").is_file():
+        c.call("POST", "api/open", {"path": str(work / "chantier.pdf")})
+        status, data = c.call("GET", "api/compress/estimate?level=screen")
+        check("estimation de la compression", status == 200 and 0 < data.get("after", 0) < data.get("before", 0) / 4, str(data)[:200])
+        target = work / "chantier - compressé.pdf"
+        status, data = c.call("POST", "api/compress/save", {"level": "screen", "path": str(target)})
+        check("PDF compressé enregistré", status == 200 and target.is_file() and target.stat().st_size == data.get("after"), str(data)[:200])
     if authority is not None:
         authority.shutdown()
         authority.server_close()

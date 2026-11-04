@@ -3,8 +3,9 @@
 Lecture, modification, annotation et signature électronique de documents PDF,
 pour les postes Windows de Menuiserie Destribois. Pensé comme un remplaçant
 simple et rapide d'Adobe Acrobat pour l'usage courant : corriger un texte,
-commenter un plan, remplir un formulaire et surtout signer avec la clé de
-signature (certificat eIDAS, marchés publics).
+commenter un plan, remplir un formulaire, assembler un dossier, compresser un
+PDF trop lourd et surtout signer avec la clé de signature (certificat eIDAS,
+marchés publics).
 
 - Ouverture d'un PDF en 1 seconde environ, première page comprise.
 - Signature PAdES avec le certificat de la clé USB : le code PIN est demandé par
@@ -40,7 +41,8 @@ signature de chaque utilisateur restent dans `%APPDATA%\DestriPDF`.
 - Ouvrir : bouton « Ouvrir » (Ctrl+O), glisser-déposer, double-clic dans
   l'Explorateur, ou un document récent de l'écran d'accueil.
 - Vignettes à gauche (bouton en début de barre) : clic pour aller à la page,
-  glisser pour déplacer une page, clic droit pour pivoter, insérer ou supprimer.
+  Ctrl+clic ou Maj+clic pour choisir plusieurs pages, glisser pour les déplacer,
+  clic droit pour pivoter, insérer ou supprimer (la page ou les pages choisies).
   Onglet « Signets » pour la table des matières du document.
 - Pastille en bas : page précédente et suivante, numéro de page, zoom (clic sur
   le pourcentage : ajuster à la largeur, page entière, 50 à 200 %). Ctrl+molette
@@ -82,6 +84,55 @@ affichent. Le panneau « Commentaires » (menu ⋯) les liste toutes.
 
 Les champs d'un formulaire PDF se remplissent directement en mode Sélection.
 
+### Organiser les pages, assembler des PDF
+
+Bouton « Organiser » de la barre d'outils (ou menu ⋯ › Organiser les pages) :
+toutes les pages du document en grille, en petites, moyennes ou grandes
+vignettes. « Terminé » ou Échap revient à la lecture ; un double-clic ouvre la
+page.
+
+- Choisir des pages : clic (une page), Ctrl+clic (ajoute ou retire une page),
+  Maj+clic (toutes les pages depuis la dernière cliquée), Ctrl+Maj+clic (ajoute
+  cette plage), Ctrl+A (toutes). Au clavier : flèches, Maj+flèches.
+- Déplacer : glisser une des pages choisies ; un trait cuivre montre où elles
+  iront. Elles restent dans l'ordre du document, et Ctrl+Z annule le tout.
+- Pivoter ou supprimer les pages choisies : boutons de la barre, clic droit ou
+  Suppr.
+- Ajouter des PDF : bouton « Ajouter des PDF » (plusieurs fichiers à la fois,
+  ajoutés à la fin), ou glisser des PDF depuis l'Explorateur entre deux pages :
+  ils s'insèrent à l'endroit du trait. Plusieurs fichiers sont rangés par nom
+  (« 2 - plan » avant « 10 - annexe »). Les mêmes gestes marchent dans les
+  vignettes à gauche. Plusieurs PDF déposés ailleurs sur le document s'ajoutent
+  à la fin ; un seul PDF déposé ailleurs s'ouvre à sa place (dans « Organiser »,
+  il s'ajoute à la fin). Le voile du glisser annonce ce qui va se passer.
+- Assembler des PDF dans un nouveau document : « Assembler des PDF » sur
+  l'écran d'accueil (ou menu ⋯), ou plusieurs PDF déposés sur l'accueil. Le
+  document assemblé reçoit un signet par fichier ; il n'a pas encore de
+  fichier : « Enregistrer » demande où l'écrire et ne remplace jamais un des PDF
+  d'origine.
+
+Un PDF protégé par un mot de passe ne s'assemble pas (l'ouvrir seul). Un PDF
+signé peut être ajouté, mais ses signatures ne valent plus dans le document
+assemblé (DestriPDF le signale) : signer le document une fois terminé.
+
+### Compresser un PDF
+
+Menu ⋯ › Compresser le PDF : trois niveaux, avec la taille obtenue affichée
+avant d'enregistrer.
+
+| Niveau | Images | Usage |
+|---|---|---|
+| Qualité élevée | 300 ppp au plus, très peu de perte | impression |
+| Équilibrée (recommandée) | 150 ppp | écran, courriel |
+| Taille minimale | 100 ppp, qualité réduite | plateformes limitées en taille |
+
+Seules les images sont recompressées (photos, pages numérisées) : texte,
+tracés, annotations, champs et mot de passe restent intacts ; les images en
+noir et blanc sont recompressées sans perte. Le PDF compressé est enregistré
+dans un nouveau fichier (« nom - compressé.pdf »), l'original reste inchangé ;
+« Ouvrir » dans la notification l'affiche. Un document signé ne se compresse
+pas : ses signatures seraient invalidées (compresser avant de signer).
+
 ### Imprimer, en livret
 
 Menu ⋯ › Imprimer (Ctrl+P) ouvre la boîte Imprimer de DestriPDF : imprimante
@@ -89,6 +140,14 @@ du poste (la dernière utilisée est proposée), pages (toutes, page affichée o
 « 1-3, 5 »), copies assemblées. « Préférences de l'imprimante… » ouvre la
 fenêtre de réglages du pilote (recto verso, bac, couleur, agrafage), gardés
 jusqu'à la fermeture de DestriPDF.
+
+Pages normales : papier A4 ou A3 et recto verso (recto seul, bord long « comme
+un livre », bord court « comme un bloc-notes ») se choisissent dans la boîte,
+qui s'ouvre sur les réglages en cours du pilote (Canon : A4, recto verso bord
+long). Les pages sont ajustées au papier choisi (une page A4 remplit une feuille
+A3). Les réglages sont relus dans le pilote avant l'envoi ; un réglage refusé
+arrête l'impression avec un message. Une imprimante sans recto verso
+automatique ne propose que « Recto seul ».
 
 Mise en page « Livret » : DestriPDF compose lui-même les feuilles — deux pages
 côte à côte par face, dans l'ordre qui donne le livret une fois la pile pliée
@@ -256,7 +315,8 @@ release indique l'empreinte SHA-256 de l'installateur.
   secret dans le chemin, contrôle Host/Origin/en-tête applicatif, CSP stricte).
 - `destripdf/document.py` : document ouvert depuis la mémoire (le fichier n'est
   jamais verrouillé), rendu, texte, modification de ligne, annotations,
-  formulaires, pages, annulation par instantanés, enregistrement complet ou
+  formulaires, pages (déplacement de plusieurs pages, insertion et assemblage
+  de PDF), compression, annulation par instantanés, enregistrement complet ou
   incrémental (document signé).
 - `destripdf/fonts.py` : choix de la police (même nom, équivalent Windows,
   police de base) et réduction aux glyphes utiles (fontTools).
@@ -265,7 +325,8 @@ release indique l'empreinte SHA-256 de l'installateur.
 - `destripdf/signing/pades.py` : signature PAdES (pyHanko), apparence visible
   à la manière d'Acrobat, état de révocation intégré (LTV), vérification.
 - `destripdf/static/` : interface (modules JavaScript sans framework, charte
-  DestriMix, polices locales).
+  DestriMix, polices locales) ; `pagesorter.js` (sélection et glisser-déposer
+  des pages, partagés par les vignettes et `organizer.js`, la vue « Organiser »).
 
 Mode recette : `--serve --port N` sert l'interface à un navigateur ;
 `DESTRIPDF_TOKEN`, `DESTRIPDF_SETTINGS_DIR` et `DESTRIPDF_TEST_PFX` (+

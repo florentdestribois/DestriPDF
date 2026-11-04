@@ -28,11 +28,26 @@ Inclus :
   révocation du certificat intégré au document (validation à long terme,
   « compatible LTV ») ; demande de Florent du 12 octobre après-midi ;
 - signature manuscrite simple (image), signalée comme sans valeur électronique ;
-- pages : pivoter, supprimer, déplacer, insérer depuis un autre PDF ;
+- pages : pivoter, supprimer, déplacer, insérer depuis d'autres PDF ; plusieurs
+  pages choisies (Ctrl+clic, Maj+clic, Ctrl+Maj+clic) déplacées ensemble par
+  glisser, dans les vignettes comme dans la vue « Organiser » (toutes les pages
+  en grille) ;
+- assembler des PDF (demande de Florent du 4 novembre 2026) : bouton « Ajouter
+  des PDF » (sélection multiple) ou glisser-déposer depuis l'Explorateur, à
+  l'endroit montré entre deux pages ; nouveau document assemblé depuis l'accueil
+  (bouton ou plusieurs PDF déposés), fichiers rangés par nom, un signet par
+  fichier, jamais enregistré à la place d'une source ;
+- compresser un PDF (même demande) : trois niveaux (qualité élevée 300 ppp,
+  équilibrée 150 ppp, taille minimale 100 ppp), taille estimée avant
+  d'enregistrer, copie compressée dans un nouveau fichier ; refusée pour un
+  document signé (ses signatures seraient invalidées) ;
 - annuler/rétablir, enregistrer, enregistrer sous, imprimer ;
 - imprimer par le pilote de l'imprimante, comme Acrobat : boîte Imprimer de
   DestriPDF (imprimante, pages, copies), « Préférences de l'imprimante »
   (fenêtre du pilote) ;
+- choisir le papier A4 ou A3 et le recto verso (recto seul, bord long, bord
+  court) des pages normales dans la boîte Imprimer, proposés d'après les
+  réglages en cours du pilote (demande de Florent du 27 octobre 2026) ;
 - imprimer en livret (demandes de Florent du 19 octobre, la dernière : « revoit
   complètement cette fonction afin de garantir que ça marche ») : feuilles
   composées par DestriPDF (deux pages par face, ordre du pliage), aperçu, A4 ou
@@ -87,17 +102,39 @@ recomposition, horodatage par défaut (réglage facultatif), PAdES-LTA
   à jour. Autorité injoignable : signature sans LTV, un seul PIN. La
   vérification juge « LTV » une signature dont la chaîne se vérifie hors ligne
   avec le seul DSS, à la date de signature.
+- Pages déplacées ensemble : `move_page` successifs (le `select()` de MuPDF
+  retire le formulaire /AcroForm), ordre final contrôlé par les xref des pages,
+  une seule étape d'annulation.
+- Assemblage : sources toutes contrôlées avant la moindre modification (PDF
+  lisible, sans mot de passe, au moins une page), insérées en une étape ;
+  fichiers déposés envoyés bout à bout dans un seul corps (`sizes`, `names`),
+  fichiers choisis dans le dialogue Windows lus par leur chemin. Document
+  assemblé : nouveau, sans fichier, « à enregistrer » (jamais perdu sans
+  question), signets par fichier comme Acrobat.
+- Compression : `pdf_rewrite_images` de MuPDF sur une copie de l'état courant ;
+  images au-delà du seuil rééchantillonnées en bicubique à la résolution visée
+  (la moyenne de MuPDF divise par puissances de 2 et laisse jusqu'au double),
+  JPEG seulement si l'image devient plus petite, noir et blanc recompressé en
+  G4 sans rééchantillonnage ; objets dédoublonnés et regroupés (`garbage=4`,
+  flux d'objets) ; mot de passe conservé. Copie gardée en mémoire jusqu'à la
+  modification suivante (estimation puis enregistrement sans recalcul).
 - Annotations sur page pivotée : coordonnées échangées dans l'espace affiché ;
   quadrilatères de surlignage transformés coin par coin ; image de signature
   pré-tournée ; texte libre composé avec `rotate`.
 - Interface : SPA vanilla (modules ES), charte DestriMix (thème `atelier`,
   `graphite` en sombre), polices locales, aucune ressource externe. Barre
   d'outils à libellés courts, pastille de navigation et de zoom en bas du
-  document, barre d'options propre à l'outil actif.
+  document, barre d'options propre à l'outil actif. Sélection de pages
+  partagée (`PageSelection`) par les vignettes et « Organiser » (`PageSorter` :
+  clics, clavier, glisser HTML5 des pages, fichiers déposés à l'endroit montré).
 - Impression (`printing.py`) : boîte Imprimer de l'interface ; préférences du
   pilote par `DocumentProperties` ; pages rendues par MuPDF et envoyées par GDI
   (`StretchDIBits`). La boîte d'impression de Windows n'est pas utilisée : sur
   Windows 11, `PrintDlgEx` ouvre une boîte moderne sans accès sûr au pilote.
+  Papier (A4, A3 ordinaires, jamais tournés) et recto verso des pages normales
+  imposés par le schéma d'impression comme pour le livret (`page_settings`,
+  seuls les réglages qui diffèrent, puis relus ; refus → message) ;
+  l'orientation reste celle du pilote.
 - Livret (`booklet.py`) : faces composées en PDF (`show_pdf_page` d'une copie où
   annotations et champs sont intégrés par `bake`, rotation de la page
   compensée), une page PDF par face. Réglages d'un document Word recto verso :
@@ -153,6 +190,10 @@ recomposition, horodatage par défaut (réglage facultatif), PAdES-LTA
 - Impression : pages envoyées au pilote Windows (essai réel avec « Microsoft
   Print to PDF ») ; copies assemblées par le pilote ; page paysage tournée vers
   la gauche, page pivotée imprimée droite (tests, recette, fumée).
+- Papier et recto verso : chaque format et chaque recto verso proposé par un
+  pilote du poste (Canon comprise) accepté et relu tel quel ; A3 imprimé
+  réellement en feuilles A3 par « Microsoft Print to PDF » ; boîte Imprimer
+  ouverte sur les réglages en cours (Canon : A4, bord long) (tests, recette).
 - Livret : pour 8 pages, faces (8|1), (2|7), (6|3), (4|5) ; chaque page une
   seule fois ; reliure à droite inversée ; imprimé réellement par un pilote
   Windows, chaque page reconnue à sa place et droite ; versos retournés sur
@@ -162,6 +203,16 @@ recomposition, horodatage par défaut (réglage facultatif), PAdES-LTA
   simulée (recto, verso selon la définition du retournement, lecture autour du
   pli) lue juste pour 4 et 8 pages, et fausse si le demi-tour des versos manque
   (tests, recette, fumée de l'exécutable figé).
+- Plusieurs pages choisies se déplacent ensemble, dans l'ordre du document, en
+  une étape d'annulation ; formulaire, annotations, liens et signets suivent
+  leurs pages (tests, recette par vrai glisser-déposer).
+- Plusieurs PDF ajoutés ou assemblés en une étape, à l'endroit du dépôt ; un
+  fichier illisible ou protégé refuse tout l'ajout sans rien modifier ; un
+  document assemblé n'est jamais perdu sans question et ne remplace jamais une
+  source (tests, recette, fumée).
+- Compression : texte, annotations, champs et mot de passe conservés, images à
+  la résolution du niveau, document ouvert intact ; refus pour un document signé
+  ou sans gain (tests, recette, fumée).
 - Aucune release GitHub sans son installateur vérifié (`scripts\release.ps1`).
 - Jamais d'instance sans fenêtre : fenêtre absente après 20 s → relance unique,
   puis message et fin (tests, recette `surveillance_demarrage.py` sur

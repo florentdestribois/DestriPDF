@@ -215,7 +215,7 @@ try:
         assert not edge.js("document.querySelector('.print-booklet-box').hidden")
         edge.wait_for("document.querySelectorAll('.booklet-preview .booklet-slot').length === 4", timeout=20)
         edge.wait_for("[...document.querySelectorAll('.booklet-preview img')].every(i => i.complete && i.naturalWidth > 0)", timeout=20)
-        sheets = edge.js("[...document.querySelector('.modal [aria-label=\"Feuille du livret\"]').options].map(o => o.value)")
+        sheets = edge.js("[...document.querySelector('.modal [aria-label=\"Papier\"]').options].map(o => o.value)")
         assert "a4" in sheets, sheets
         note = edge.js("document.querySelector('.print-booklet-box .help').textContent")
         plan = edge.js("document.querySelector('.booklet-preview + .help').textContent")
@@ -246,7 +246,7 @@ try:
     def _():
         before = set((RECETTE / "impressions").glob("*.pdf"))
         print_dialog("Microsoft Print to PDF", "booklet")
-        edge.wait_for("document.querySelector('.modal [aria-label=\"Feuille du livret\"]').options.length > 0", timeout=20)
+        edge.wait_for("document.querySelector('.modal [aria-label=\"Papier\"]').options.length > 0", timeout=20)
         edge.js("[...document.querySelectorAll('.modal .btn-primary')][0].click()")
         edge.wait_for("[...document.querySelectorAll('.toast')].some(t => t.textContent.includes('Livret envoyé'))", timeout=60)
         printed = new_print(before)
@@ -272,6 +272,56 @@ try:
         printed = new_print(before)
         assert printed.page_count == 1, printed.page_count
         printed[0].get_pixmap(dpi=40).save(OUT / "r3-07e-imprime-page2.png")
+
+    @step("Boîte Imprimer : papier A4/A3 et recto verso, réglages en cours du pilote")
+    def _():
+        names = api("printers")["printers"]
+        canon = next((n for n in names if "C3520" in n), None)
+        print_dialog(canon or "Microsoft Print to PDF")
+        edge.wait_for("document.querySelector('.modal [aria-label=\"Recto verso\"]').options.length > 0", timeout=30)
+        state = edge.js("""(() => { const q = (l) => document.querySelector(`.modal [aria-label="${l}"]`);
+            return { sheets: [...q('Papier').options].map(o => o.textContent), sheet: q('Papier').value,
+                     modes: [...q('Recto verso').options].map(o => o.value), duplex: q('Recto verso').value,
+                     disabled: q('Recto verso').disabled,
+                     duplexShown: !q('Recto verso').closest('div').hidden, bindingShown: !q('Reliure').closest('div').hidden }; })()""")
+        print("    boîte :", state)
+        assert state["sheets"] == ["A4", "A3"] and state["sheet"] == "a4", state
+        assert state["duplexShown"] and not state["bindingShown"], state
+        if canon:
+            # réglages par défaut de la Canon : A4 recto verso bord long
+            assert state["modes"] == ["simplex", "long", "short"] and state["duplex"] == "long", state
+        else:
+            assert state["modes"] == ["simplex"] and state["disabled"], state
+        edge.shot(OUT / "r3-07f-papier-recto-verso.png")
+        edge.viewport(1024, 680)
+        time.sleep(0.4)
+        edge.shot(OUT / "r3-07f-papier-1024.png")
+        assert edge.js("document.documentElement.scrollWidth <= innerWidth")
+        edge.viewport(1280, 720)
+        # livret : la colonne Recto verso laisse la place à la reliure, libellés du livret
+        edge.js("""(() => { const q = (l) => document.querySelector(`.modal [aria-label="${l}"]`);
+            q('Mise en page').value = 'booklet'; q('Mise en page').dispatchEvent(new Event('change')); })()""")
+        swapped = edge.js("""(() => { const q = (l) => document.querySelector(`.modal [aria-label="${l}"]`);
+            return [q('Recto verso').closest('div').hidden, q('Reliure').closest('div').hidden, q('Papier').options[0].textContent]; })()""")
+        assert swapped == [True, False, "A4 → livret A5"], swapped
+        edge.key("Escape")
+        edge.wait_for("!document.querySelector('.modal')")
+
+    @step("Imprimer en A3 sur « Microsoft Print to PDF » (sortie dans un fichier)")
+    def _():
+        before = set((RECETTE / "impressions").glob("*.pdf"))
+        print_dialog("Microsoft Print to PDF")
+        edge.wait_for("document.querySelector('.modal [aria-label=\"Papier\"]').options.length > 1", timeout=30)
+        edge.js("""(() => { const q = (l) => document.querySelector(`.modal [aria-label="${l}"]`);
+            q('Papier').value = 'a3';
+            q('Pages à imprimer').value = 'range'; q('Pages à imprimer').dispatchEvent(new Event('change'));
+            q('Pages choisies').value = '1'; })()""")
+        edge.js("[...document.querySelectorAll('.modal .btn-primary')][0].click()")
+        edge.wait_for("[...document.querySelectorAll('.toast')].some(t => t.textContent.includes('en A3 recto seul'))", timeout=60)
+        printed = new_print(before)
+        assert printed.page_count == 1, printed.page_count
+        assert abs(printed[0].rect.width - 842) < 3 and abs(printed[0].rect.height - 1191) < 3, printed[0].rect
+        printed[0].get_pixmap(dpi=30).save(OUT / "r3-07g-imprime-a3.png")
 
     @step("Exporter en JPG : menu ⋯, toutes les pages en 150 ppp")
     def _():

@@ -121,6 +121,41 @@ def test_booklet_settings_are_those_of_a_word_document():
     assert p.backs_half_turn(p.booklet_settings(one_sided, "a4")) is False
 
 
+def test_page_settings_paper_and_duplex():
+    """Pages normales : papier ordinaire et recto verso choisis dans la boîte Imprimer,
+    rien d'autre (orientation, reliure… restent ceux du pilote)."""
+    assert p.page_settings(CANON_LIKE, "a3", "long") == {
+        "psk:PageMediaSize": "psk:ISOA3", "psk:JobDuplexAllDocumentsContiguously": "psk:TwoSidedLongEdge"}
+    assert p.page_settings(CANON_LIKE, "a4", "short")["psk:JobDuplexAllDocumentsContiguously"] == "psk:TwoSidedShortEdge"
+    assert p.page_settings(CANON_LIKE, "a4", "simplex")["psk:JobDuplexAllDocumentsContiguously"] == "psk:OneSided"
+    assert p.page_settings(CANON_LIKE, None, None) == {}
+    assert p.page_settings(CANON_LIKE, None, "long") == {"psk:JobDuplexAllDocumentsContiguously": "psk:TwoSidedLongEdge"}
+    assert p.duplex_modes(CANON_LIKE) == ["simplex", "long", "short"]
+    # sans recto verso (Microsoft Print to PDF) : recto seul accepté, recto verso refusé
+    one_sided = _caps([("psk:ISOA4", 210000, 297000)], duplex=())
+    assert p.duplex_modes(one_sided) == ["simplex"]
+    assert p.page_settings(one_sided, "a4", "simplex") == {"psk:PageMediaSize": "psk:ISOA4"}
+    with pytest.raises(p.PrintError, match="recto verso"):
+        p.page_settings(one_sided, "a4", "long")
+    with pytest.raises(p.PrintError, match="A3"):
+        p.page_settings(one_sided, "a3", None)
+    # « Document » au lieu de « Job » : la fonction déclarée par le pilote est employée
+    document_duplex = _caps([("psk:ISOA4", 210000, 297000)], duplex=()).replace(
+        "</psf:PrintCapabilities>",
+        '<psf:Feature name="psk:DocumentDuplex"><psf:Option name="psk:OneSided"/>'
+        '<psf:Option name="psk:TwoSidedLongEdge"/></psf:Feature></psf:PrintCapabilities>')
+    assert p.duplex_modes(document_duplex) == ["simplex", "long"]
+    assert p.page_settings(document_duplex, None, "long") == {"psk:DocumentDuplex": "psk:TwoSidedLongEdge"}
+
+
+def test_current_choice_reads_driver_settings():
+    summary = {"psk:PageMediaSize": "psk:ISOA4", "psk:JobDuplexAllDocumentsContiguously": "psk:TwoSidedLongEdge"}
+    assert p.current_choice(CANON_LIKE, summary) == {"sheet": "a4", "duplex": "long"}
+    assert p.current_choice(CANON_LIKE, {"psk:PageMediaSize": "psk:ISOA3", "psk:DocumentDuplex": "psk:OneSided"}) == {
+        "sheet": "a3", "duplex": "simplex"}
+    assert p.current_choice(CANON_LIKE, {"psk:PageMediaSize": "psk:NorthAmericaLetter"}) == {"sheet": None, "duplex": "simplex"}
+
+
 def test_media_option_ignores_rotated_paper():
     """« A4R » (A4 tourné) n'est jamais demandé : c'est le papier qui manquait à la Canon."""
     rotated_only = _caps([("psk:ISOA4Rotated", 297000, 210000), ("vendor:A4R", 210000, 297000)])
@@ -311,7 +346,7 @@ def test_capabilities_from_parallel_requests():
 
     with concurrent.futures.ThreadPoolExecutor(8) as pool:
         results = list(pool.map(caps, names * 3))
-    assert all(r is None or set(r) == {"duplex", "sheets"} for r in results)
+    assert all(r is None or set(r) == {"duplex", "duplex_modes", "sheets", "current"} for r in results)
 
 
 def test_booklet_settings_accepted_by_real_drivers():
@@ -354,6 +389,31 @@ def test_booklet_settings_accepted_by_real_drivers():
         tried.append(name)
     if not tried:
         pytest.skip("aucune imprimante utilisable")
+
+def test_page_settings_accepted_by_real_drivers():
+    """Sur chaque imprimante du poste : papier A4 puis A3 et chaque recto verso
+    proposé, acceptés par le pilote et relus tels quels ; la boîte Imprimer
+    propose ensuite les réglages en cours. Rien n'est imprimé."""
+    printing = p.WindowsPrinting()
+    tried = []
+    for name in printing.printers()[0]:
+        try:
+            caps = printing.capabilities(name)
+        except p.PrintError:
+            continue  # imprimante réseau injoignable
+        assert caps["current"]["duplex"] in caps["duplex_modes"], name
+        assert caps["current"]["sheet"] in caps["sheets"] + [None], name
+        caps_xml = p.capabilities_xml(name)
+        for sheet in caps["sheets"]:
+            for duplex in caps["duplex_modes"]:
+                devmode = printing.settings.job_devmode(name, 2, sheet, duplex)
+                summary = p.ticket_summary(name, devmode)
+                assert p.current_choice(caps_xml, summary) == {"sheet": sheet, "duplex": duplex}, (name, sheet, duplex)
+                assert int.from_bytes(devmode[86:88], "little") == 2
+        tried.append(name)
+    if not tried:
+        pytest.skip("aucune imprimante utilisable")
+
 
 def _red_square_pdf(rotation=0):
     doc = fitz.open()
@@ -428,6 +488,31 @@ def test_print_pages_through_windows_driver(tmp_path, quiet_driver):
     assert [red_corner(page) for page in out] == [True, False, True, False]
     # feuilles portrait du pilote ; la page paysage y est tournée d'un quart de tour
     assert all(page.rect.width < page.rect.height for page in out)
+
+
+def test_print_document_on_a3_through_windows_driver(tmp_path, quiet_driver):
+    """Papier A3 choisi dans la boîte Imprimer : feuilles A3 en sortie du pilote,
+    la page A4 agrandie pour la remplir, le coin rouge toujours en haut à gauche."""
+    printing = p.WindowsPrinting()
+    if PRINT_TO_PDF not in printing.printers()[0]:
+        pytest.skip("imprimante « Microsoft Print to PDF » absente")
+    if "a3" not in printing.capabilities(PRINT_TO_PDF)["sheets"]:
+        pytest.skip("A3 non proposé par « Microsoft Print to PDF »")
+    s = d.PdfSession(_red_square_pdf(), name="devis.pdf")
+    target = tmp_path / "a3.pdf"
+    printing.print_document(PRINT_TO_PDF, 1, "devis.pdf", [0], s.page_size, s.render_print,
+                            output=str(target), sheet="a3", duplex="simplex")
+    deadline = time.time() + 30
+    while not (target.exists() and target.stat().st_size > 0) and time.time() < deadline:
+        time.sleep(0.2)
+    time.sleep(0.5)
+    out = fitz.open(target)
+    assert out.page_count == 1
+    assert abs(out[0].rect.width - 842) < 3 and abs(out[0].rect.height - 1191) < 3, out[0].rect
+    pix = out[0].get_pixmap(dpi=36)
+    red = [(x, y) for x in range(pix.width) for y in range(pix.height)
+           if pix.pixel(x, y)[0] > 200 and pix.pixel(x, y)[1] < 80]
+    assert red and max(x for x, _ in red) < pix.width / 3 and max(y for _, y in red) < pix.height / 4
 
 
 PALETTE = {1: (1, 0, 0), 2: (0, 0.6, 0), 3: (0, 0, 1), 4: (1, 0.55, 0), 5: (0.55, 0, 0.55), 6: (0, 0.7, 0.7)}

@@ -505,6 +505,164 @@ afin de garantir que ça marche ».
   sur GitHub. Le poste garde l'installation 1.3.3 du 19 octobre (même code,
   construite avant ce suivi).
 
+## Papier A4/A3 et recto verso des pages normales, 27 octobre 2026 (non publié)
+
+Demande de Florent : « Pour l'impression des documents, ajoute le choix du
+format A4 ou A3 ainsi que le recto verso ».
+
+### Réalisé
+
+- [x] `printing.py` : `page_settings` (papier ordinaire, jamais un « A4R », et
+  recto verso `psk:OneSided`/`TwoSidedLongEdge`/`TwoSidedShortEdge` sur la
+  fonction déclarée par le pilote), `duplex_modes`, `current_choice` ; réglage
+  commun `_tuned` (changés s'ils diffèrent, copies, relus ; refus → message)
+  partagé avec le livret. Sans choix, comportement d'avant (préférences seules).
+- [x] Capacités : `duplex_modes` et `current` (papier et recto verso en cours,
+  préférences comprises) ; `api/print` accepte `sheet` et `duplex` (refus
+  `bad_sheet`, `bad_duplex`, y compris valeurs non textuelles).
+- [x] Boîte Imprimer : ligne Papier (A4, A3) et Recto verso (recto seul, bord
+  long « comme un livre », bord court « comme un bloc-notes »), ouverte sur
+  les réglages du pilote et relue après « Préférences de l'imprimante » ; en
+  livret, la colonne Recto verso cède la place à la Reliure et le papier
+  s'affiche « A4 → livret A5 ». Imprimante sans recto verso : choix grisé et
+  signalé ; capacités illisibles : impression « selon l'imprimante ».
+  Message de fin : « 1 page envoyée … en A3 recto seul ».
+
+### Validations
+
+- [x] Tests : 124 (pytest), dont chaque format × chaque recto verso proposé
+  accepté et relu sur chaque pilote du poste (Adobe PDF, iR-ADV C3520,
+  Microsoft Print to PDF, OneNote, PDFCreator), sans rien imprimer, et une page
+  A4 imprimée en A3 par « Microsoft Print to PDF » (feuille 842 × 1191 pt,
+  annotation en haut à gauche).
+- [x] Recette Edge : 33 parcours sur 33 ; boîte ouverte sur la Canon en A4 bord
+  long (ses réglages par défaut), sans débordement en 1024×680 ; impression A3
+  dans un fichier relue. Captures `recette_output\20261027-091647\r3-07f-*`,
+  `r3-07g-imprime-a3.png`.
+- [x] Version 1.4.0 (code, informations de l'exécutable, installateur).
+- [x] Premier `build.ps1` 1.4.0 en échec au test de fumée (16/20 : signature,
+  LTV, vérification). Cause : le runtime Python du poste (Codex, mis à jour le
+  25 octobre) a un `ssl.py` qui charge `codex-rejected-cas.pem`, voisin de
+  `ssl.py`, à chaque contexte SSL ; absent de l'exécutable figé, l'import
+  d'aiohttp échouait (`FileNotFoundError`). Reproduit sur un exécutable minimal.
+  Correction : `DestriPDF.spec` joint ce fichier (dossier `_internal`) quand le
+  runtime en a un. Toute construction depuis le 25 octobre aurait eu ce défaut.
+- [x] `build.ps1` 1.4.0 : 124 tests, fumée de l'exécutable figé 20/20,
+  installateur `DestriPDF-1.4.0-installation.exe` (36 192 565 octets) ; SHA-256
+  `A742BD269FE86E6DE577DA4B95F3BB53277E043E82B47F591232A3106A8BE626`.
+- [x] Installée sur le poste à la demande de Florent, pour essai sur la Canon
+  (1.3.3 → 1.4.0, installation silencieuse, autorisation Windows acceptée) :
+  718 fichiers identiques au paquet, entrée « DestriPDF » version 1.4.0 ;
+  lancement sans droits : fenêtre en 0,50 s, interface en 1,12 s, fermeture
+  propre.
+- [ ] Essai papier sur la Canon (A3, recto verso bord long et bord court) :
+  à faire par Florent. Ni commit ni release.
+
+## Assemblage de PDF et compression, 4 novembre 2026 (non publié)
+
+Demande de Florent : « Permettre d'assemblé des PDF ensemble par un simple
+glisser/déposer ou bouton "ajouter des PDFs", l'utilisateur devra pouvoir
+modifier l'odre des pages par un simple glisser (en pouvant selectionner
+plusieur pages via clique+ctrl ou clic + maj+ctrl) » et « Fonction de
+compression des pdfs ».
+
+### Choix vérifiés par essais
+
+- [x] `Document.select()` (`pdf_rearrange_pages2`) retire /AcroForm : un
+  formulaire réordonné n'est plus un formulaire. Déplacement par `move_page`
+  successifs (formulaire gardé), ordre final contrôlé par les xref.
+- [x] `rewrite_images` : la méthode « moyenne » de MuPDF divise par puissances
+  de 2 (300 ppp restent 300 ppp pour une cible de 150) ; bicubique : résolution
+  exacte. Toutes les images sont recompressées, pas seulement celles au-delà du
+  seuil : « seulement si plus petite » (défaut de MuPDF) garde un logo sans
+  perte ; en « qualité élevée », les images sans perte le restent.
+- [x] Dialogue Windows à sélection multiple : ordre rendu variable, fichiers
+  rangés par nom comme dans l'Explorateur.
+
+### Réalisé
+
+- [x] `document.py` : `move_pages` (pages choisies avant une page, une étape
+  d'annulation, aucune si elles sont déjà en place), `insert_pdfs` (plusieurs PDF
+  à une position en une étape ; tout est refusé si une source est illisible,
+  protégée ou vide ; sources signées signalées), `assemble_pdfs` (nouveau PDF,
+  un signet par fichier, ses signets dessous), `compressed_bytes` et
+  `COMPRESSION_LEVELS` (300, 150, 100 ppp ; JPEG 85, 75, 55), document neuf « à
+  enregistrer » (`new_document`, dossier des sources proposé).
+- [x] Serveur : `api/pages/move-many`, `api/pages/insert-upload` (PDF envoyés
+  bout à bout : `sizes`, `names`), `api/pages/insert-files`,
+  `api/assemble-upload`, `api/assemble-files`, `api/dialog/open-pdfs`,
+  `api/dialog/save-pdf`, `api/compress/estimate`, `api/compress/save` (copie
+  gardée jusqu'à la modification suivante ; refus : sans gain, document signé,
+  niveau inconnu, sans chemin). Dialogue Windows dans une requête à part :
+  l'indicateur d'avancement n'apparaît qu'une fois les fichiers choisis.
+  `api/pages/insert-dialog` remplacé.
+- [x] Interface : vue « Organiser » (bouton de la barre d'outils, menu ⋯, clic
+  droit d'une vignette) : grille de toutes les pages en trois tailles ; clic,
+  Ctrl+clic, Maj+clic, Ctrl+Maj+clic ; flèches, Maj+flèches, Ctrl+A, Suppr,
+  Entrée, double-clic, Échap ; glisser des pages choisies (trait d'insertion,
+  défilement au bord) ; PDF de l'Explorateur déposés à l'endroit du trait ;
+  barre « Ajouter des PDF », pivoter, supprimer, nombre de pages choisies,
+  « Terminé ». Vignettes à gauche : mêmes gestes (`pagesorter.js` partagé, une
+  page choisie seule suit la page affichée). Accueil : « Assembler des PDF » et
+  plusieurs PDF déposés assemblés. Voile du glisser annonçant l'effet du dépôt.
+  Boîte « Compresser le PDF » : trois niveaux, taille estimée (les autres niveaux
+  estimés aussitôt si le calcul est rapide), copie « nom - compressé.pdf »,
+  notification avec « Ouvrir ».
+- [x] Constatés en recette et corrigés : notifications posées sur les boutons
+  d'une boîte ouverte (passées en haut tant qu'une boîte est ouverte) ;
+  « Enregistrer » d'un document sans fichier envoyait une requête refusée avant
+  « Enregistrer sous » ; menu ⋯ plus haut que la fenêtre (défilant).
+- [x] Version 1.5.0 (code, informations de l'exécutable, installateur) ;
+  exécutable et installateur non construits.
+
+### Validations
+
+- [x] Tests : 142 (18 nouveaux) : déplacement de plusieurs pages (4 cas, déjà
+  en place, refus), formulaire, annotations, liens et signets qui suivent leurs
+  pages, insertion groupée et refus complet, assemblage (ordre, signets,
+  document à enregistrer, source signée), compression (niveaux, résolution,
+  texte, document ouvert intact, mot de passe, document signé, modifications en
+  cours), routes et refus (garde-fous, envoi incohérent, trop de fichiers,
+  fichier disparu, dialogues, sans gain).
+- [x] Recette Edge : 44 parcours sur 44 (18 + 15 + 11 nouveaux,
+  `parcours_assemblage.py`) : vrai glisser-déposer HTML5 (geste de la souris
+  intercepté par le protocole DevTools), PDF « de l'Explorateur » déposés entre
+  deux pages et sur l'accueil, Ctrl/Maj/Ctrl+Maj+clic, clavier, assemblage puis
+  Enregistrer sous, compression (photo 3,7 Mo → 119 Ko en équilibrée, 26 Ko en
+  minimale), 1024×680, 1920×1080 et sombre sans débordement, console propre.
+- [x] Test de fumée sur les sources : 26/26 (4 nouveaux : assemblage,
+  déplacement, estimation et enregistrement de la compression).
+
+### Relecture indépendante (agent, 4 novembre) — 9 constats, tous traités
+
+- [x] Grave : la compression rendait brunes les images CMJN à profil ICC (MuPDF
+  les recompresse en JPEG RVB en leur laissant l'espace CMJN ; exports
+  d'InDesign, catalogues). Après recompression, l'espace de couleur suit le
+  JPEG ; couleurs vérifiées aux trois niveaux, JPEG et sans perte (test).
+- [x] `insert_pdf` ne reprend ni les calques (/OCProperties) ni les pièces
+  jointes : un calque masqué d'un plan apparaissait. Calques reportés avec leur
+  état par défaut (table des objets copiés de MuPDF), pièces jointes copiées
+  (nom rendu unique) (test).
+- [x] Une source signée rendait le document assemblé « signé » à signatures
+  invalides (bandeau rouge, compression refusée, enregistrement incrémental) :
+  ses champs sont figés (`bake`), la signature reste visible comme image (test).
+- [x] Dialogue Windows : « Électricité » rangé après « plan 10 » → ordre de
+  l'Explorateur (`StrCmpLogicalW`), comme pour les fichiers déposés (test).
+- [x] Glisser de pages resté en mémoire (liste reconstruite pendant le geste) :
+  le type du glisser décide, un PDF déposé ne peut plus être pris pour un
+  déplacement de pages.
+- [x] Demandes croisées : une modification des pages à la fois dans
+  l'interface, réponse plus ancienne que l'état affiché ignorée ; verrou tenu
+  pendant tout l'enregistrement de la copie compressée.
+- [x] Page cliquée en fin de document remplacée dans la sélection par la page
+  désignée par le défilement : une page choisie seule ne suit la page affichée
+  qu'une fois sortie de l'écran.
+- [x] Envoi de plus de 1 Go : message clair au lieu de « DestriPDF ne répond
+  plus » ; même limite pour les fichiers choisis dans le dialogue.
+- [x] Sélection gardée par position après Ctrl+Z ou Ctrl+Y : remise à zéro
+  (recette).
+- [x] Tests : 146 ; recette Edge : 44 parcours sur 44 après corrections.
+
 ### Reste à faire / limites
 
 - [ ] Imprimante sans recto verso automatique : faces imprimées à la suite, pas
@@ -524,3 +682,10 @@ afin de garantir que ça marche ».
 - [ ] Clés accessibles uniquement par PKCS#11 (hors magasin Windows) : non gérées.
 - [ ] Recomposition d'un paragraphe entier : modification ligne par ligne.
 - [ ] OCR des documents numérisés : hors périmètre.
+- [ ] Glisser-déposer depuis l'Explorateur : recetté dans Edge sans fenêtre
+  (même moteur que WebView2), à confirmer dans la vraie fenêtre DestriPDF.
+- [ ] Assemblage : PDF seulement (pas d'images JPG ou PNG) ; un PDF protégé par
+  mot de passe est refusé (l'ouvrir seul) ; numérotation des pages
+  personnalisée (/PageLabels) des sources non reprise.
+- [ ] Compression : un très gros document numérisé occupe le moteur PDF pendant
+  le calcul (affichage en pause) ; pas d'annulation en cours de calcul.
