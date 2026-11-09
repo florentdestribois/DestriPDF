@@ -473,7 +473,7 @@ class App {
   }
 
   static fileCount(paths) {
-    return paths.length > 1 ? `${paths.length} PDF` : `« ${paths[0].split(/[\\/]/).pop()} »`;
+    return paths.length > 1 ? `${paths.length} fichiers` : `« ${paths[0].split(/[\\/]/).pop()} »`;
   }
 
   // « Ajouter des PDF » : dialogue Windows à sélection multiple, ou champ de fichier (navigateur).
@@ -518,8 +518,8 @@ class App {
   pdfsOnly(files) {
     const pdfs = files.filter(isPdfFile).sort(byName);
     const skipped = files.length - pdfs.length;
-    if (!pdfs.length) toast(files.length > 1 ? 'Aucun de ces fichiers n\'est un PDF.' : 'Ce fichier n\'est pas un PDF.', 'error');
-    else if (skipped) toast(`${skipped} fichier${skipped > 1 ? 's' : ''} ignoré${skipped > 1 ? 's' : ''} : seuls les PDF s'assemblent.`, 'info');
+    if (!pdfs.length) toast(files.length > 1 ? 'Aucun de ces fichiers n\'est un PDF ou une image.' : 'Ce fichier n\'est ni un PDF ni une image.', 'error');
+    else if (skipped) toast(`${skipped} fichier${skipped > 1 ? 's' : ''} ignoré${skipped > 1 ? 's' : ''} : seuls les PDF et les images s'assemblent.`, 'info');
     const empty = pdfs.filter((f) => !f.size);
     if (empty.length) {
       toast(`« ${empty[0].name} » est vide.`, 'error');
@@ -546,7 +546,7 @@ class App {
     if (this.editor.isOpen) await this.editor.commit();
     const { body, query } = App.uploadQuery(pdfs);
     this.pageOpPending = true;
-    const indicator = busy(pdfs.length > 1 ? `Ajout de ${pdfs.length} PDF…` : `Ajout de « ${pdfs[0].name} »…`);
+    const indicator = busy(pdfs.length > 1 ? `Ajout de ${pdfs.length} fichiers…` : `Ajout de « ${pdfs[0].name} »…`);
     try {
       const data = await Api.upload(`api/pages/insert-upload?at=${Math.max(0, Math.round(at))}&${query}`, body);
       await this.afterInsert(data);
@@ -566,7 +566,7 @@ class App {
     if (this.organizer.isOpen) this.organizer.reveal(start, count);
     else this.viewer.scrollToPage(start);
     const plural = count > 1 ? 's' : '';
-    toast(`${count} page${plural} ajoutée${plural}${files > 1 ? ` (${files} PDF)` : ''}.`, 'ok', { action: 'Annuler', onAction: () => this.undo() });
+    toast(`${count} page${plural} ajoutée${plural}${files > 1 ? ` (${files} fichiers)` : ''}.`, 'ok', { action: 'Annuler', onAction: () => this.undo() });
     this.warnSigned(data.signed_sources);
   }
 
@@ -600,7 +600,7 @@ class App {
     if (!pdfs.length) return;
     if (!confirmed && !(await this.confirmDiscard())) return;
     const { body, query } = App.uploadQuery(pdfs);
-    const indicator = busy(`Assemblage de ${pdfs.length} PDF…`);
+    const indicator = busy(`Assemblage de ${pdfs.length} fichiers…`);
     try {
       await this.afterAssemble(await Api.upload(`api/assemble-upload?${query}`, body));
     } catch (err) {
@@ -613,7 +613,7 @@ class App {
   async afterAssemble(data) {
     await this.onOpened(data.doc, { organize: true });
     const pages = data.doc.page_count;
-    toast(`${data.assembled} PDF assemblés : ${pages} page${pages > 1 ? 's' : ''}. Glissez les pages pour changer leur ordre, puis enregistrez.`, 'ok', { duration: 7000 });
+    toast(`${data.assembled} fichiers assemblés : ${pages} page${pages > 1 ? 's' : ''}. Glissez les pages pour changer leur ordre, puis enregistrez.`, 'ok', { duration: 7000 });
     this.warnSigned(data.signed_sources);
   }
 
@@ -1400,8 +1400,8 @@ class App {
       { label: 'Fermer le document', icon: 'close', disabled: !doc, action: () => this.closeDocument() },
       '-',
       { label: 'Organiser les pages', icon: 'grid', disabled: !doc, action: () => this.organizer.open() },
-      { label: 'Ajouter des PDF après cette page…', icon: 'addFiles', disabled: !doc, action: () => this.addPdfs(current + 1) },
-      { label: 'Assembler des PDF (nouveau document)…', icon: 'merge', action: () => this.assemble() },
+      { label: 'Ajouter des fichiers après cette page…', icon: 'addFiles', disabled: !doc, action: () => this.addPdfs(current + 1) },
+      { label: 'Assembler des fichiers (nouveau document)…', icon: 'merge', action: () => this.assemble() },
       { label: 'Pivoter la page à droite', icon: 'rotate', disabled: !doc, action: () => this.rotatePages([current], 90) },
       { label: 'Pivoter la page à gauche', icon: 'rotateLeft', disabled: !doc, action: () => this.rotatePages([current], -90) },
       { label: 'Supprimer la page', icon: 'trash', disabled: !doc, action: () => this.deletePages([current]) },
@@ -1616,12 +1616,12 @@ class App {
     let title;
     let hint = '';
     if (!this.doc) {
-      title = count > 1 ? `Déposez les ${count} PDF pour les assembler` : 'Déposez le PDF pour l\'ouvrir';
+      title = count > 1 ? `Déposez les ${count} fichiers pour les assembler` : 'Déposez le fichier pour l\'ouvrir';
     } else if (count > 1 || this.organizer.isOpen) {
-      title = count > 1 ? `Déposez pour ajouter ces ${count} PDF à la fin du document` : 'Déposez pour ajouter ce PDF à la fin du document';
+      title = count > 1 ? `Déposez pour ajouter ces ${count} fichiers à la fin du document` : 'Déposez pour ajouter ce fichier à la fin du document';
       hint = 'Pour les placer ailleurs, déposez-les entre deux pages.';
     } else {
-      title = 'Déposez le PDF pour l\'ouvrir';
+      title = 'Déposez le fichier pour l\'ouvrir';
       hint = 'Pour l\'ajouter à ce document, déposez-le entre deux vignettes ou dans « Organiser ».';
     }
     $('drop-title').textContent = title;
@@ -1640,7 +1640,7 @@ class App {
     }
     const file = pdfs[0];
     if (!file) {
-      toast('Déposez un fichier PDF.', 'error');
+      toast('Déposez un PDF ou une image.', 'error');
       return;
     }
     if (this.state?.app?.mode === 'window') {

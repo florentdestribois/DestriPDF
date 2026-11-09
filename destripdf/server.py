@@ -177,8 +177,17 @@ class AppState:
 
     def open_bytes(self, data: bytes, *, path: str | None, name: str | None, password: str | None = None,
                    new_document: bool = False, origin_dir: str | None = None) -> dict:
-        from .document import DocumentError, PdfSession
+        from .document import FITZ_LOCK, DocumentError, PdfSession, image_kind, image_to_pdf
 
+        recent = path
+        if image_kind(data):
+            # Image ouverte : nouveau PDF sans fichier, « Enregistrer » ne remplace jamais l'image.
+            with FITZ_LOCK:
+                data = image_to_pdf(data, name or (Path(path).name if path else None))
+            stem = Path(name or path or "").stem or "Image"
+            if path:
+                origin_dir = origin_dir or str(Path(path).parent)
+            path, name, new_document = None, f"{stem}.pdf", True
         try:
             session = PdfSession(data, path=path, name=name, password=password, new_document=new_document)
             session.origin_dir = origin_dir
@@ -198,9 +207,9 @@ class AppState:
             self.compressed = {"key": None, "levels": {}, "before": None}
         if old is not None:
             old.close()
-        if path:
+        if recent:
             try:
-                self.settings.add_recent(path)
+                self.settings.add_recent(recent)
             except OSError:
                 log.warning("fichiers récents non enregistrés", exc_info=True)
         self.refresh_title()
@@ -883,9 +892,9 @@ class Handler(BaseHTTPRequestHandler):
 
         paths = body.get("paths")
         if not isinstance(paths, list) or not paths or not all(isinstance(p, str) and p for p in paths):
-            raise ApiError("Aucun PDF choisi.", "empty")
+            raise ApiError("Aucun fichier choisi.", "empty")
         if len(paths) > MAX_FILES:
-            raise ApiError(f"{MAX_FILES} PDF au plus en une fois.", "too_many")
+            raise ApiError(f"{MAX_FILES} fichiers au plus en une fois.", "too_many")
         paths = [os.path.abspath(path) for path in paths]
         for path in paths:
             if not os.path.isfile(path):
@@ -907,7 +916,7 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             raise ApiError("Requête invalide.", "bad_request")
         if len(sizes) > MAX_FILES:
-            raise ApiError(f"{MAX_FILES} PDF au plus en une fois.", "too_many")
+            raise ApiError(f"{MAX_FILES} fichiers au plus en une fois.", "too_many")
         if any(size <= 0 for size in sizes) or sum(sizes) != len(data):
             raise ApiError("Envoi des fichiers incomplet : recommencez.", "bad_request")
         if not isinstance(names, list):

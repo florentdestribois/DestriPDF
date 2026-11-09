@@ -16,7 +16,7 @@ import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from . import APP_NAME, __version__, startup
+from . import APP_NAME, IMAGE_EXTENSIONS, __version__, startup
 from .server import AppState, LocalServer
 from .settings import LOCAL_DIR, Settings
 
@@ -54,6 +54,16 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+# Dialogues d'ouverture : PDF et images (converties en pages PDF).
+_IMAGES = ";".join("*" + ext for ext in IMAGE_EXTENSIONS)
+OPEN_TYPES = (
+    f"PDF et images (*.pdf;{_IMAGES})",
+    "Documents PDF (*.pdf)",
+    f"Images ({_IMAGES})",
+    "Tous les fichiers (*.*)",
+)
+
+
 class WindowDialogs:
     """Dialogues natifs de Windows, ouverts par la fenêtre pywebview."""
 
@@ -67,7 +77,7 @@ class WindowDialogs:
             webview.FileDialog.OPEN,
             directory=directory or "",
             allow_multiple=False,
-            file_types=("Documents PDF (*.pdf)", "Tous les fichiers (*.*)"),
+            file_types=OPEN_TYPES,
         )
         if not result:
             return None
@@ -81,7 +91,7 @@ class WindowDialogs:
             webview.FileDialog.OPEN,
             directory=directory or "",
             allow_multiple=True,
-            file_types=("Documents PDF (*.pdf)", "Tous les fichiers (*.*)"),
+            file_types=OPEN_TYPES,
         )
         if not result:
             return []
@@ -241,7 +251,7 @@ def main(argv: list[str] | None = None) -> int:
         """Fichier glissé depuis l'Explorateur : l'interface l'ouvre par son chemin réel."""
         for item in (event.get("dataTransfer") or {}).get("files", []):
             path = item.get("pywebviewFullPath")
-            if path and path.lower().endswith(".pdf") and os.path.isfile(path):
+            if path and path.lower().endswith((".pdf", *IMAGE_EXTENSIONS)) and os.path.isfile(path):
                 window.evaluate_js(f"window.DestriPDF && window.DestriPDF.openDropped({json.dumps(path)})")
                 return
 

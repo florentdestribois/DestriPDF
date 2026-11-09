@@ -88,8 +88,8 @@ export class Organizer {
       node.addEventListener('click', () => { const pages = chosen(); if (pages.length) action(pages); });
       return node;
     };
-    const add = el('button', { class: 'btn btn-secondary btn-sm', type: 'button', 'data-tip': 'Ajouter des PDF à la fin du document (ou déposez-les entre deux pages)' },
-      iconEl('addFiles'), el('span', { text: 'Ajouter des PDF' }));
+    const add = el('button', { class: 'btn btn-secondary btn-sm', type: 'button', 'data-tip': 'PDF ou images, ajoutés à la fin du document (ou déposez-les entre deux pages)' },
+      iconEl('addFiles'), el('span', { text: 'Ajouter des fichiers' }));
     add.addEventListener('click', () => this.app.addPdfs(this.app.doc ? this.app.doc.page_count : 0));
     this.status = el('span', { class: 'org-status', 'aria-live': 'polite', 'data-tip': 'Ctrl+clic ou Maj+clic pour choisir plusieurs pages, puis glissez-les pour les déplacer' });
     this.sizeButtons = {};
@@ -214,8 +214,8 @@ export class Organizer {
       { label: label('Pivoter à droite', 'Pivoter à droite'), icon: 'rotate', action: () => this.app.rotatePages(pages, 90) },
       { label: label('Pivoter à gauche', 'Pivoter à gauche'), icon: 'rotateLeft', action: () => this.app.rotatePages(pages, -90) },
       '-',
-      { label: 'Insérer des PDF avant', icon: 'insert', action: () => this.app.addPdfs(pages[0]) },
-      { label: 'Insérer des PDF après', icon: 'insert', action: () => this.app.addPdfs(pages[pages.length - 1] + 1) },
+      { label: 'Insérer des fichiers avant', icon: 'insert', action: () => this.app.addPdfs(pages[0]) },
+      { label: 'Insérer des fichiers après', icon: 'insert', action: () => this.app.addPdfs(pages[pages.length - 1] + 1) },
       '-',
       { label: label('Supprimer la page', 'Supprimer'), icon: 'trash', action: () => this.app.deletePages(pages) },
     ]);

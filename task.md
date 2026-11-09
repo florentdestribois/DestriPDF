@@ -710,8 +710,68 @@ Demande : « commit push et release puis instal le ».
 - [ ] OCR des documents numérisés : hors périmètre.
 - [ ] Glisser-déposer depuis l'Explorateur : recetté dans Edge sans fenêtre
   (même moteur que WebView2), à confirmer dans la vraie fenêtre DestriPDF.
-- [ ] Assemblage : PDF seulement (pas d'images JPG ou PNG) ; un PDF protégé par
+- [x] Assemblage : images acceptées (voir « Conversion et assemblage d'images »,
+  9 novembre). Un PDF protégé par
   mot de passe est refusé (l'ouvrir seul) ; numérotation des pages
   personnalisée (/PageLabels) des sources non reprise.
 - [ ] Compression : un très gros document numérisé occupe le moteur PDF pendant
   le calcul (affichage en pause) ; pas d'annulation en cours de calcul.
+
+## Conversion et assemblage d'images, 9 novembre 2026 (non publié)
+
+Demande de Florent : « Permet la conversion et assemblage de fichier image ».
+
+### Choix vérifiés par essais
+
+- `convert_to_pdf` de MuPDF garde le JPEG tel quel (DCT), applique l'orientation
+  EXIF (photo prise en portrait) et le masque de transparence ; `insert_image` ne
+  fait pas mieux. Une image sans résolution inscrite compte 96 ppp, une photo de
+  téléphone 72 ppp (4032 px = 1,4 m) : d'où la règle de taille ci-dessous.
+- Pillow non nécessaire : MuPDF lit JPG, PNG, TIFF (multipage), BMP, GIF,
+  JPEG 2000, WebP. HEIC (iPhone) non lu.
+
+### Réalisé
+
+- [x] Moteur (`document.py`) : `image_kind` (signature du fichier, pas son nom),
+  `image_to_pdf` (une page par image ; taille réelle si la page tient dans un A3,
+  sinon réduite dans un A4 de même orientation, proportions gardées, jamais
+  agrandie). `_open_sources` convertit les images : ajout et assemblage mêlent
+  PDF et images, un signet par fichier, une étape d'annulation, une image
+  illisible refuse tout l'ajout.
+- [x] Ouverture (`server.py`) : une image ouverte (dialogue, glisser, récents,
+  ligne de commande) devient « nom.pdf », sans fichier, à enregistrer ; dossier
+  de l'image proposé ; l'image reste dans les récents (reconvertie à la
+  réouverture). Dialogues Windows : filtre « PDF et images » ; fichier déposé
+  dans la fenêtre accepté s'il est une image.
+- [x] Interface : « Choisir un fichier », « Ajouter des fichiers », « Assembler des
+  fichiers », « Insérer des fichiers avant/après » ; infobulles « PDF ou images » ;
+  champs de fichier et voile du glisser étendus aux images ; messages en
+  « fichiers ».
+- [x] `IMAGE_EXTENSIONS` dans `destripdf/__init__.py` : la fenêtre ne charge pas
+  MuPDF au démarrage pour connaître les extensions.
+
+### Validations
+
+- [x] Tests : 156 (10 nouveaux, `tests/test_images.py`) : signature des formats,
+  taille (scan A4 à 300 ppp, photo 4032×3024 à 72 ppp, petite image), JPEG non
+  recompressé et orientation EXIF, TIFF de deux pages, transparence rendue,
+  images illisibles refusées, ajout mêlé en une étape, refus complet, assemblage
+  avec signets, routes (ouvrir par chemin, déposer, ajouter, assembler, image
+  jamais remplacée, refus d'une image illisible, garde-fous `X-DestriPDF` et
+  jeton).
+- [x] Recette Edge : 47 parcours sur 47 (3 nouveaux : photo déposée sur l'accueil
+  ouverte redressée, photo et TIFF déposés entre deux pages dans « Organiser »,
+  « Assembler des fichiers » avec PNG transparent, PDF et TIFF). Captures lues :
+  accueil, `r5-01` à `r5-03`.
+- [x] Test de fumée sur les sources : 28/28 (2 nouveaux : assemblage d'images,
+  image ouverte en PDF). Exécutable figé et installateur non construits.
+
+### Reste à faire / limites
+
+- [ ] HEIC (photos d'iPhone) non lu : exporter en JPG.
+- [ ] Pas de PDF vers images autres que l'export JPG existant (PNG, TIFF).
+- [ ] DestriPDF non proposé dans « Ouvrir avec » des images (installateur
+  inchangé) ; les ouvrir par DestriPDF ou les glisser.
+- [ ] Glisser-déposer d'images depuis l'Explorateur dans la vraie fenêtre : même
+  chemin que les PDF, à confirmer hors Edge sans fenêtre.
+- [x] Version 1.6.0 (code, informations de l'exécutable, installateur).

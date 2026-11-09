@@ -1416,9 +1416,85 @@ class _Source:
     signed: bool  # signé à l'origine : signatures figées en image dans la copie
 
 
+# Signatures des formats d'image lus par MuPDF (extension proposée à MuPDF).
+_IMAGE_MAGIC = (
+    (b"\xff\xd8\xff", "jpg"),
+    (b"\x89PNG\r\n\x1a\n", "png"),
+    (b"II*\x00", "tif"),
+    (b"MM\x00*", "tif"),
+    (b"BM", "bmp"),
+    (b"GIF87a", "gif"),
+    (b"GIF89a", "gif"),
+    (b"\x00\x00\x00\x0cjP  \r\n\x87\n", "jp2"),
+    (b"\xff\x4f\xff\x51", "jpx"),
+)
+A4 = (595.0, 842.0)
+A3 = (842.0, 1191.0)
+
+
+def image_kind(data: bytes) -> str | None:
+    """Format d'une image reconnue par sa signature (pas par son nom), sinon None."""
+    head = bytes(data[:16])
+    for magic, kind in _IMAGE_MAGIC:
+        if head.startswith(magic):
+            return kind
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def _image_page_size(width: float, height: float) -> tuple[float, float]:
+    """Taille de page d'une image : sa taille réelle (résolution inscrite) si elle
+    tient dans un A3 — un scan garde son format exact —, sinon réduite pour tenir
+    dans un A4 de même orientation (photo de téléphone à 72 ppp : plus d'un mètre)."""
+    long_side, short_side = max(width, height), min(width, height)
+    if long_side <= A3[1] * 1.01 and short_side <= A3[0] * 1.01:
+        return width, height
+    scale = min(A4[1] / long_side, A4[0] / short_side)
+    return width * scale, height * scale
+
+
+def image_to_pdf(data: bytes, name: str | None = None) -> bytes:
+    """PDF d'une image : une page par image (chaque page d'un TIFF multipage),
+    orientation de l'appareil photo (EXIF) appliquée, JPEG repris sans
+    recompression, transparence conservée. Appelé sous FITZ_LOCK."""
+    label = f"« {name} »" if name else "Cette image"
+    kind = image_kind(data)
+    if kind is None:
+        raise DocumentError(f"{label} n'est pas une image reconnue.", "not_image")
+    try:
+        img = fitz.open(stream=bytes(data), filetype=kind)
+    except Exception as exc:  # noqa: BLE001
+        raise DocumentError(f"{label} est une image illisible ({kind.upper()}).", "bad_image") from exc
+    conv = out = None
+    try:
+        if img.page_count == 0:
+            raise DocumentError(f"{label} ne contient aucune image.", "empty")
+        try:
+            conv = fitz.open("pdf", img.convert_to_pdf())
+        except Exception as exc:  # noqa: BLE001
+            raise DocumentError(f"{label} est une image illisible ({kind.upper()}).", "bad_image") from exc
+        out = fitz.open()
+        for index, page in enumerate(conv):
+            width, height = _image_page_size(page.rect.width, page.rect.height)
+            target = out.new_page(width=width, height=height)
+            target.show_pdf_page(target.rect, conv, index)
+        return out.tobytes(garbage=3, deflate=True)
+    finally:
+        for doc in (out, conv, img):
+            if doc is not None:
+                doc.close()
+
+
+def _pdf_or_image(name: str | None, data: bytes) -> bytes:
+    """Octets PDF d'une source : un PDF tel quel, une image convertie."""
+    return image_to_pdf(data, name) if image_kind(data) else data
+
+
 def _open_sources(sources: list[tuple[str | None, bytes]], password: str | None = None) -> list[_Source]:
-    """PDF à insérer ou à assembler, tous contrôlés avant la moindre modification
-    (lisible, sans mot de passe, au moins une page). Appelé sous FITZ_LOCK.
+    """PDF ou images à insérer ou à assembler, tous contrôlés avant la moindre
+    modification (lisible, sans mot de passe, au moins une page) ; une image devient
+    une page à sa taille. Appelé sous FITZ_LOCK.
 
     Une source signée a ses champs figés (`bake`) : sa signature reste visible
     comme une image mais ne figure plus comme signature, invalide hors de son
@@ -1429,11 +1505,12 @@ def _open_sources(sources: list[tuple[str | None, bytes]], password: str | None 
     try:
         for name, data in sources:
             label = f"« {name} »" if name else ""
+            data = _pdf_or_image(name, data)
             try:
                 doc = fitz.open("pdf", data)
             except Exception as exc:  # noqa: BLE001
-                raise DocumentError(f"{label} n'est pas un PDF lisible." if label else "Le fichier à insérer n'est pas un PDF lisible.",
-                                    "not_pdf") from exc
+                raise DocumentError(f"{label} n'est ni un PDF ni une image lisible." if label
+                                    else "Le fichier à insérer n'est ni un PDF ni une image lisible.", "not_pdf") from exc
             source = _Source(name, doc, False)
             opened.append(source)
             if doc.needs_pass and not (password and doc.authenticate(password)):

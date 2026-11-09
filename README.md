@@ -98,18 +98,26 @@ page.
   iront. Elles restent dans l'ordre du document, et Ctrl+Z annule le tout.
 - Pivoter ou supprimer les pages choisies : boutons de la barre, clic droit ou
   Suppr.
-- Ajouter des PDF : bouton « Ajouter des PDF » (plusieurs fichiers à la fois,
+- Ajouter des PDF ou des images : bouton « Ajouter des fichiers » (plusieurs fichiers à la fois,
   ajoutés à la fin), ou glisser des PDF depuis l'Explorateur entre deux pages :
   ils s'insèrent à l'endroit du trait. Plusieurs fichiers sont rangés par nom
   (« 2 - plan » avant « 10 - annexe »). Les mêmes gestes marchent dans les
   vignettes à gauche. Plusieurs PDF déposés ailleurs sur le document s'ajoutent
   à la fin ; un seul PDF déposé ailleurs s'ouvre à sa place (dans « Organiser »,
   il s'ajoute à la fin). Le voile du glisser annonce ce qui va se passer.
-- Assembler des PDF dans un nouveau document : « Assembler des PDF » sur
+- Assembler des PDF et des images dans un nouveau document : « Assembler des fichiers » sur
   l'écran d'accueil (ou menu ⋯), ou plusieurs PDF déposés sur l'accueil. Le
   document assemblé reçoit un signet par fichier ; il n'a pas encore de
   fichier : « Enregistrer » demande où l'écrire et ne remplace jamais un des PDF
   d'origine.
+
+Images acceptées partout où un PDF l'est (ouvrir, ajouter, assembler, glisser-déposer) :
+JPG, PNG, TIFF (une page par image d'un TIFF multipage), BMP, GIF, JPEG 2000,
+WebP. Chaque image devient une page à sa taille réelle si elle tient dans un A3
+(scan), sinon réduite dans un A4 de même orientation (photo de téléphone) ;
+orientation de l'appareil photo appliquée, JPEG repris sans perte, transparence
+conservée. Une image ouverte devient un nouveau PDF « nom.pdf » à enregistrer :
+l'image n'est jamais remplacée. HEIC (iPhone) non lu : l'exporter en JPG.
 
 Un PDF protégé par un mot de passe ne s'assemble pas (l'ouvrir seul). Un PDF
 signé peut être ajouté, mais ses signatures ne valent plus dans le document

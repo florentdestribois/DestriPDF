@@ -150,3 +150,66 @@ def photo_pdf(dpi: int = 400) -> bytes:
     pix = fitz.Pixmap(fitz.csRGB, width, height, bytes(pixels), False)
     page.insert_image(fitz.Rect(72, 90, 72 + 216, 90 + 288), stream=pix.tobytes("jpg", jpg_quality=95))
     return doc.tobytes(garbage=3, deflate=True)
+
+
+# --- Images (conversion en pages PDF) ---------------------------------------------
+
+
+def jpeg_photo(width: int = 400, height: int = 200, *, dpi: int = 72, orientation: int | None = None) -> bytes:
+    """JPEG d'essai : fond gris, coin rouge en haut à gauche ; `orientation` : balise
+    EXIF de l'appareil photo (6 = tourner d'un quart de tour à droite)."""
+    import struct
+
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, width, height), False)
+    pix.clear_with(200)
+    for x in range(width // 4):
+        for y in range(height // 4):
+            pix.set_pixel(x, y, (255, 0, 0))
+    pix.set_dpi(dpi, dpi)
+    data = pix.tobytes("jpg")
+    if orientation is None:
+        return data
+    tiff = b"MM\x00\x2a\x00\x00\x00\x08" + struct.pack(">H", 1) + struct.pack(">HHIHH", 0x0112, 3, 1, orientation, 0) + b"\x00" * 4
+    app1 = b"Exif\x00\x00" + tiff
+    return data[:2] + b"\xff\xe1" + struct.pack(">H", len(app1) + 2) + app1 + data[2:]
+
+
+def png_image(width: int = 300, height: int = 300, *, alpha: bool = False) -> bytes:
+    """PNG blanc ; avec `alpha`, transparent sauf un carré bleu opaque au centre."""
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, width, height), alpha)
+    pix.clear_with(255)
+    if alpha:
+        inside = lambda x, y: width // 4 <= x < 3 * width // 4 and height // 4 <= y < 3 * height // 4  # noqa: E731
+        pix.set_alpha(bytes(255 if inside(x, y) else 0 for y in range(height) for x in range(width)))
+        for y in range(height // 4, 3 * height // 4):
+            for x in range(width // 4, 3 * width // 4):
+                pix.set_pixel(x, y, (40, 80, 200, 255))
+    return pix.tobytes("png")
+
+
+def tiff_pages(frames) -> bytes:
+    """TIFF RGB non compressé de plusieurs pages : [(largeur, hauteur, (r, v, b), ppp), …]."""
+    import struct
+
+    out = bytearray(b"II*\x00\x00\x00\x00\x00")
+    previous = 4
+    for width, height, rgb, dpi in frames:
+        data_offset = len(out)
+        out += bytes(rgb) * (width * height)
+        if len(out) % 2:
+            out += b"\x00"
+        res_offset = len(out)
+        out += struct.pack("<II", dpi, 1)
+        bps_offset = len(out)
+        out += struct.pack("<HHH", 8, 8, 8)
+        ifd = len(out)
+        struct.pack_into("<I", out, previous, ifd)
+        tags = [(256, 3, 1, width), (257, 3, 1, height), (258, 3, 3, bps_offset), (259, 3, 1, 1), (262, 3, 1, 2),
+                (273, 4, 1, data_offset), (277, 3, 1, 3), (278, 3, 1, height), (279, 4, 1, width * height * 3),
+                (282, 5, 1, res_offset), (283, 5, 1, res_offset), (296, 3, 1, 2)]
+        out += struct.pack("<H", len(tags))
+        for tag, kind, count, value in tags:
+            out += struct.pack("<HHII", tag, kind, count, value)
+        previous = len(out)
+        out += b"\x00\x00\x00\x00"
+    return bytes(out)

@@ -55,7 +55,7 @@
     <div class="sidebar-body" id="thumbs" role="tabpanel" aria-labelledby="tab-pages"></div>
     <div class="sidebar-body" id="toc" role="tabpanel" aria-labelledby="tab-toc" hidden></div>
     <div class="sidebar-foot">
-      <button class="btn btn-ghost btn-sm" id="btn-insert" type="button" data-tip="Ajouter des PDF à la fin (ou déposez-les entre deux vignettes)"><span class="ico" data-icon="addFiles"></span><span>Ajouter des PDF</span></button>
+      <button class="btn btn-ghost btn-sm" id="btn-insert" type="button" data-tip="PDF ou images, ajoutés à la fin (ou déposez-les entre deux vignettes)"><span class="ico" data-icon="addFiles"></span><span>Ajouter des fichiers</span></button>
     </div>
   </aside>
 
@@ -84,14 +84,14 @@
         <h1 class="start-title">Ouvrir un document</h1>
         <p class="start-lead">Lire, modifier le texte, annoter, assembler et signer avec votre clé.</p>
         <div class="dropzone" id="dropzone">
-          <button class="btn btn-primary" id="start-open" type="button"><span class="ico" data-icon="open"></span><span>Choisir un PDF</span></button>
-          <button class="btn btn-secondary" id="start-assemble" type="button"><span class="ico" data-icon="merge"></span><span>Assembler des PDF</span></button>
-          <span class="dropzone-hint">ou glissez un ou plusieurs PDF ici</span>
+          <button class="btn btn-primary" id="start-open" type="button"><span class="ico" data-icon="open"></span><span>Choisir un fichier</span></button>
+          <button class="btn btn-secondary" id="start-assemble" type="button"><span class="ico" data-icon="merge"></span><span>Assembler des fichiers</span></button>
+          <span class="dropzone-hint">ou glissez des PDF ou des images ici</span>
         </div>
         <div class="recent" id="recent"></div>
       </div>
     </div>
-    <div class="drop-overlay" id="drop-overlay" hidden><span class="drop-title" id="drop-title">Déposez le PDF pour l'ouvrir</span><span class="drop-hint" id="drop-hint"></span></div>
+    <div class="drop-overlay" id="drop-overlay" hidden><span class="drop-title" id="drop-title">Déposez le fichier pour l'ouvrir</span><span class="drop-hint" id="drop-hint"></span></div>
   </section>
 
   <aside class="panel" id="panel" hidden aria-label="Panneau">
@@ -103,9 +103,9 @@
   </aside>
 </main>
 
-<input type="file" id="file-input" accept="application/pdf,.pdf" hidden>
-<input type="file" id="insert-input" accept="application/pdf,.pdf" multiple hidden>
-<input type="file" id="assemble-input" accept="application/pdf,.pdf" multiple hidden>
+<input type="file" id="file-input" accept="application/pdf,.pdf,image/jpeg,image/png,image/tiff,image/bmp,image/gif,image/webp,.jpg,.jpeg,.jpe,.jfif,.png,.tif,.tiff,.bmp,.gif,.jp2,.jpx,.webp" hidden>
+<input type="file" id="insert-input" accept="application/pdf,.pdf,image/jpeg,image/png,image/tiff,image/bmp,image/gif,image/webp,.jpg,.jpeg,.jpe,.jfif,.png,.tif,.tiff,.bmp,.gif,.jp2,.jpx,.webp" multiple hidden>
+<input type="file" id="assemble-input" accept="application/pdf,.pdf,image/jpeg,image/png,image/tiff,image/bmp,image/gif,image/webp,.jpg,.jpeg,.jpe,.jfif,.png,.tif,.tiff,.bmp,.gif,.jp2,.jpx,.webp" multiple hidden>
 <div class="print-root" id="print-root" aria-hidden="true"></div>
 <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
 <div class="modal-root" id="modal-root"></div>

@@ -24,6 +24,11 @@ lot.mkdir(exist_ok=True)
 (lot / "1 - lettre.pdf").write_bytes(samples.other_pdf(1, "Lettre"))
 (lot / "2 - memoire.pdf").write_bytes(samples.other_pdf(3, "Mémoire"))
 (lot / "10 - annexe.pdf").write_bytes(samples.other_pdf(2, "Annexe"))
+images = root / "images"
+images.mkdir(exist_ok=True)
+(images / "chantier.jpg").write_bytes(samples.jpeg_photo(1600, 1200, orientation=6))
+(images / "scan.tif").write_bytes(samples.tiff_pages([(850, 1170, (230, 230, 230), 100), (1170, 850, (200, 220, 255), 100)]))
+(images / "logo.png").write_bytes(samples.png_image(300, 300, alpha=True))
 (root / "chantier.pdf").write_bytes(samples.photo_pdf(400))
 
 # Document de 12 pages avec un vrai paragraphe et des signets

@@ -171,6 +171,15 @@ def main(base: str, workdir: str) -> int:
         check("assemblage de PDF (nouveau document)", status == 200 and doc.get("page_count") == 6 and doc.get("dirty"), str(data)[:200])
         status, data = c.call("POST", "api/pages/move-many", {"pages": [4, 5], "before": 0})
         check("déplacement de plusieurs pages", status == 200 and data.get("moved") == {"start": 0, "count": 2}, str(data)[:200])
+    images = work / "images"
+    if images.is_dir():
+        # Images converties en pages PDF par MuPDF embarqué (JPEG, TIFF multipage, PNG).
+        status, data = c.call("POST", "api/assemble-files", {"paths": [str(p) for p in sorted(images.iterdir())]})
+        doc = data.get("doc", {}) if isinstance(data, dict) else {}
+        check("assemblage d'images (JPG, TIFF, PNG)", status == 200 and doc.get("page_count") == 4, str(data)[:200])
+        status, data = c.call("POST", "api/open", {"path": str(images / "chantier.jpg")})
+        doc = data.get("doc", {}) if isinstance(data, dict) else {}
+        check("image ouverte en PDF", status == 200 and doc.get("name") == "chantier.pdf" and doc.get("path") is None, str(data)[:200])
     if (work / "chantier.pdf").is_file():
         c.call("POST", "api/open", {"path": str(work / "chantier.pdf")})
         status, data = c.call("GET", "api/compress/estimate?level=screen")

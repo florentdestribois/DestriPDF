@@ -8,7 +8,10 @@ import { el } from './ui.js';
 const PAGES_TYPE = 'application/x-destripdf-pages';
 let activeDrag = null; // { pages } : pages en cours de déplacement, quelle que soit la liste
 
-export const isPdfFile = (file) => /\.pdf$/i.test(file.name || '') || file.type === 'application/pdf';
+// PDF ou image (convertie en page PDF par le serveur).
+export const isImageFile = (file) => /\.(jpe?g|jpe|jfif|png|tiff?|bmp|gif|jp2|jpx|webp)$/i.test(file.name || '')
+  || /^image\/(jpeg|png|tiff|bmp|gif|jp2|jpx|webp)$/.test(file.type || '');
+export const isPdfFile = (file) => /\.pdf$/i.test(file.name || '') || file.type === 'application/pdf' || isImageFile(file);
 
 // Ordre de l'Explorateur : sans casse, « 2 - plan » avant « 10 - annexe ».
 export const byName = (a, b) => (a.name || '').localeCompare(b.name || '', 'fr', { numeric: true, sensitivity: 'base' });

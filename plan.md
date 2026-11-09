@@ -37,6 +37,10 @@ Inclus :
   l'endroit montré entre deux pages ; nouveau document assemblé depuis l'accueil
   (bouton ou plusieurs PDF déposés), fichiers rangés par nom, un signet par
   fichier, jamais enregistré à la place d'une source ;
+- convertir et assembler des images (demande de Florent du 9 novembre 2026) :
+  JPG, PNG, TIFF multipage, BMP, GIF, JPEG 2000, WebP acceptés partout où un PDF
+  l'est (ouvrir, ajouter, assembler, glisser-déposer) ; une image ouverte devient
+  un nouveau PDF à enregistrer, jamais écrit à la place de l'image ;
 - compresser un PDF (même demande) : trois niveaux (qualité élevée 300 ppp,
   équilibrée 150 ppp, taille minimale 100 ppp), taille estimée avant
   d'enregistrer, copie compressée dans un nouveau fichier ; refusée pour un
@@ -111,6 +115,12 @@ recomposition, horodatage par défaut (réglage facultatif), PAdES-LTA
   fichiers choisis dans le dialogue Windows lus par leur chemin. Document
   assemblé : nouveau, sans fichier, « à enregistrer » (jamais perdu sans
   question), signets par fichier comme Acrobat.
+- Images : reconnues par leur signature (`image_kind`), converties par MuPDF
+  (`convert_to_pdf` : orientation EXIF appliquée, JPEG gardé en DCT, masque de
+  transparence) puis posées par `show_pdf_page` sur une page à la taille réelle
+  si elle tient dans un A3, sinon réduite dans un A4 de même orientation.
+  Conversion dans `_open_sources` (ajout, assemblage) et `AppState.open_bytes`
+  (ouverture : document neuf sans fichier, dossier de l'image proposé).
 - Compression : `pdf_rewrite_images` de MuPDF sur une copie de l'état courant ;
   images au-delà du seuil rééchantillonnées en bicubique à la résolution visée
   (la moyenne de MuPDF divise par puissances de 2 et laisse jusqu'au double),
@@ -210,6 +220,10 @@ recomposition, horodatage par défaut (réglage facultatif), PAdES-LTA
   fichier illisible ou protégé refuse tout l'ajout sans rien modifier ; un
   document assemblé n'est jamais perdu sans question et ne remplace jamais une
   source (tests, recette, fumée).
+- Images : une page par image (TIFF multipage compris), orientation de l'appareil
+  photo appliquée, JPEG non recompressé, transparence conservée, scan à sa taille
+  réelle, photo réduite dans un A4 ; une image illisible refuse tout l'ajout ;
+  l'image ouverte n'est jamais remplacée (tests, recette, fumée).
 - Compression : texte, annotations, champs et mot de passe conservés, images à
   la résolution du niveau, document ouvert intact ; refus pour un document signé
   ou sans gain (tests, recette, fumée).

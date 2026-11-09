@@ -20,6 +20,7 @@ OUT = Path(sys.argv[1])
 OUT.mkdir(exist_ok=True)
 RECETTE = Path(sys.argv[2])
 LOT = RECETTE / "lot"
+IMAGES = RECETTE / "images"
 URL = "http://127.0.0.1:8790/recette/"
 results = []
 
@@ -264,7 +265,7 @@ try:
         edge.key("z", modifiers=CTRL)
         time.sleep(0.6)
 
-    @step("Accueil : « Assembler des PDF », rangés par nom, à enregistrer")
+    @step("Accueil : « Assembler des fichiers », rangés par nom, à enregistrer")
     def _():
         edge.js("void window.__app.closeDocument()")
         discard_if_asked()
@@ -279,7 +280,7 @@ try:
         assert [entry[1] for entry in doc["toc"]] == ["1 - lettre", "2 - memoire", "10 - annexe"], doc["toc"]
         assert first_lines() == ["Lettre 1", "Mémoire 1", "Mémoire 2", "Mémoire 3", "Annexe 1", "Annexe 2"]
         thumbs_loaded(".org-card img")
-        print("    ", toast_with("PDF assemblés"))
+        print("    ", toast_with("fichiers assemblés"))
         edge.shot(OUT / "r4-09-assemblage.png")
         # Ctrl+S : un document assemblé n'a pas encore de fichier, « Enregistrer sous »
         target = RECETTE / "dossier assemblé.pdf"
@@ -303,10 +304,61 @@ try:
             edge.shot(OUT / "r4-10-accueil-depot.png")
 
         edge.drop_files([LOT / "2 - memoire.pdf", LOT / "10 - annexe.pdf", LOT / "1 - lettre.pdf"], ((x0 + x1) / 2, y0 + 60), hover)
-        assert captured["title"] == "Déposez les 3 PDF pour les assembler", captured
+        assert captured["title"] == "Déposez les 3 fichiers pour les assembler", captured
         edge.wait_for("window.__app.doc && window.__app.doc.name === '1 - lettre - assemblé.pdf'", timeout=20)
         edge.wait_for("document.body.classList.contains('organizing')", timeout=10)
         assert edge.js("window.__app.doc.page_count") == 6
+
+    @step("Accueil : une photo déposée s'ouvre en PDF, à enregistrer")
+    def _():
+        edge.js("void window.__app.closeDocument()")
+        discard_if_asked()
+        edge.wait_for("!document.getElementById('start').hidden", timeout=10)
+        x0, y0, x1, y1 = rect(".start-card")
+        captured = {}
+
+        def hover():
+            captured["title"] = edge.js("document.getElementById('drop-title').textContent")
+
+        edge.drop_files([IMAGES / "chantier.jpg"], ((x0 + x1) / 2, y0 + 60), hover)
+        assert captured["title"] == "Déposez le fichier pour l'ouvrir", captured
+        edge.wait_for("window.__app.doc && window.__app.doc.name === 'chantier.pdf'", timeout=20)
+        doc = edge.js("window.__app.doc")
+        assert doc["page_count"] == 1 and doc["dirty"] and not doc["path"], doc
+        page = doc["pages"][0] if doc.get("pages") else None
+        if page:
+            assert page["h"] > page["w"], page  # orientation de l'appareil photo appliquée
+        time.sleep(1.0)
+        edge.shot(OUT / "r5-01-photo-ouverte.png")
+
+    @step("Organiser : une photo et un TIFF de deux pages déposés entre deux pages")
+    def _():
+        open_doc(LOT / "2 - memoire.pdf")
+        edge.js("void window.__app.organizer.open()")
+        edge.wait_for("document.body.classList.contains('organizing')", timeout=10)
+        thumbs_loaded(".org-card img")
+        x0, y0, x1, y1 = rect(card(0))
+        v = version()
+        edge.drop_files([IMAGES / "scan.tif", IMAGES / "chantier.jpg"], (x1 - 12, (y0 + y1) / 2), lambda: None)
+        wait_version(v)
+        assert edge.js("window.__app.doc.page_count") == 6
+        assert selection() == [1, 2, 3], selection()
+        print("    ", toast_with("ajoutées"))
+        thumbs_loaded(".org-card img")
+        edge.shot(OUT / "r5-02-images-ajoutees.png")
+        edge.js("void window.__app.undo()")
+        edge.wait_for("window.__app.doc.page_count === 3", timeout=10)
+
+    @step("Accueil : « Assembler des fichiers » avec PDF et images")
+    def _():
+        edge.js("void window.__app.closeDocument()")
+        discard_if_asked()
+        edge.wait_for("!document.getElementById('start').hidden", timeout=10)
+        set_files("#assemble-input", [IMAGES / "logo.png", LOT / "1 - lettre.pdf", IMAGES / "scan.tif"])
+        edge.wait_for("window.__app.doc && window.__app.doc.name === '1 - lettre - assemblé.pdf'", timeout=20)
+        assert edge.js("window.__app.doc.page_count") == 4
+        print("    ", toast_with("assemblés : 4 pages"))
+        edge.shot(OUT / "r5-03-assemblage-images.png")
 
     @step("Compresser le PDF : estimation par niveau puis copie compressée")
     def _():
