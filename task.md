@@ -717,7 +717,7 @@ Demande : « commit push et release puis instal le ».
 - [ ] Compression : un très gros document numérisé occupe le moteur PDF pendant
   le calcul (affichage en pause) ; pas d'annulation en cours de calcul.
 
-## Conversion et assemblage d'images, 9 novembre 2026 (non publié)
+## Conversion et assemblage d'images, 9 novembre 2026 (version 1.6.0)
 
 Demande de Florent : « Permet la conversion et assemblage de fichier image ».
 
@@ -765,6 +765,19 @@ Demande de Florent : « Permet la conversion et assemblage de fichier image ».
   accueil, `r5-01` à `r5-03`.
 - [x] Test de fumée sur les sources : 28/28 (2 nouveaux : assemblage d'images,
   image ouverte en PDF). Exécutable figé et installateur non construits.
+
+### Publication — 9 novembre, à la demande de Florent
+
+Demande : « Oui, release 1.6.0 ».
+
+- [x] Commit `0d9e452` ; `scriptselease.ps1 -Publish` : `build.ps1` complet —
+  156 tests, exécutable, fumée de l'exécutable figé 28/28 (images comprises),
+  installateur `DestriPDF-1.6.0-installation.exe` (36 700 038 octets), SHA-256
+  `CC751B9C5CCA5FB707A8C0FF55888F34E4F85D248F899F1EB2CDE19B8CCFDF41`.
+- [x] `main` et l'étiquette `v1.6.0` poussées ; release publiée :
+  https://github.com/florentdestribois/DestriPDF/releases/tag/v1.6.0,
+  installateur joint, taille et SHA-256 identiques sur GitHub.
+- [ ] Non installée sur le poste (pas demandé).
 
 ### Reste à faire / limites
 
