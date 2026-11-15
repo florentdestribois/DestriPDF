@@ -869,6 +869,12 @@ destricenter pour les applications : DestriPDF, DestriNote, Destriview », mené
 - [x] Exécutable figé de la release lancé en vraie fenêtre (réglages isolés, PFX
   de test) : fenêtre en 0,8 s, icône et interface à la nouvelle charte
   (`charte\f-executable-fige.png`).
+- [x] Installée sur le poste à la demande de Florent (« Oui, installe-la ») :
+  1.6.0 → 1.7.0, installation silencieuse, autorisation Windows acceptée, aucune
+  fenêtre DestriPDF ouverte. Entrée « DestriPDF » 1.7.0 ; 759 fichiers identiques
+  au paquet (plus le désinstalleur), anciennes polices retirées par
+  `[InstallDelete]`. Fumée de l'exécutable installé (mode recette, PFX de
+  test) : 30/30.
 
 ### Reste à faire / limites
 
@@ -880,4 +886,3 @@ destricenter pour les applications : DestriPDF, DestriNote, Destriview », mené
   500, Barlow Condensed 500, Roboto 400 et 500.
 - [ ] Mouvements non regardés à l'œil sur un poste où Windows les laisse actifs.
 - [ ] Thème sombre : déclinaison propre à DestriPDF, à faire valider par Florent.
-- [ ] Non installée sur le poste (pas demandé).
