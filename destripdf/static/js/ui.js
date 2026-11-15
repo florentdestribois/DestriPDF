@@ -96,6 +96,25 @@ export function iconEl(name, cls = 'ico') {
   return span;
 }
 
+// --- Vocabulaire du plan ---
+
+// État : un signe et deux mots. kind : ok, warn, bad, suivi ou '' (neutre).
+// L'explication, s'il en faut une, va dans l'infobulle.
+export function etat(kind, text, tip = null) {
+  return el('span', { class: `etat${kind ? ` etat--${kind}` : ''}`, 'data-tip': tip || undefined }, el('i'), el('span', { text }));
+}
+
+// Cote : titre de groupe entre deux filets dorés à ticks.
+export function cote(text, { tag = 'div', cls = '', tip = null } = {}) {
+  return el(tag, { class: `cote cote--debut${cls ? ` ${cls}` : ''}`, text, 'data-tip': tip || undefined });
+}
+
+// Cartouche : cellules [étiquette, valeur] bordées de bleu, valeur en serif.
+export function cartouche(cells, cls = '') {
+  return el('dl', { class: `cartouche${cls ? ` ${cls}` : ''}` },
+    cells.map(([label, value]) => el('div', {}, el('dt', { text: label }), el('dd', { text: value }))));
+}
+
 // --- Notifications ---
 
 export function toast(message, kind = 'info', { action, onAction, duration } = {}) {
@@ -125,9 +144,12 @@ export function modal({ title, text = '', body = null, buttons = [], wide = fals
     const previous = document.activeElement;
     const dialog = el('div', { class: `modal${wide ? ' modal-wide' : ''}`, role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'modal-title' });
     const backdrop = el('div', { class: 'modal-backdrop' }, dialog);
-    dialog.append(el('h2', { class: 'modal-title', id: 'modal-title', text: title }));
-    if (text) dialog.append(el('p', { class: 'modal-text', text }));
-    if (body) dialog.append(body);
+    // Le contenu défile dans la feuille : ses repères d'angle restent visibles.
+    const sheet = el('div', { class: 'modal-scroll' });
+    dialog.append(sheet);
+    sheet.append(el('h2', { class: 'modal-title', id: 'modal-title', text: title }));
+    if (text) sheet.append(el('p', { class: 'modal-text', text }));
+    if (body) sheet.append(body);
     const actions = el('div', { class: 'modal-actions' });
     let done = false;
     const close = (value) => {
@@ -144,7 +166,7 @@ export function modal({ title, text = '', body = null, buttons = [], wide = fals
         actions.append(el('span', { class: 'spacer' }));
         continue;
       }
-      const node = el('button', { class: `btn ${button.kind || 'btn-ghost'}`, type: 'button', text: button.label });
+      const node = el('button', { class: `btn ${button.kind || 'btn-ghost'}`, type: 'button', text: button.label, 'data-tip': button.tip || undefined });
       node.addEventListener('click', async () => {
         if (button.validate) {
           const ok = await button.validate();
@@ -155,7 +177,7 @@ export function modal({ title, text = '', body = null, buttons = [], wide = fals
       if (button.default) node.dataset.default = '1';
       actions.append(node);
     }
-    dialog.append(actions);
+    sheet.append(actions);
     const onKey = (event) => {
       if (event.key === 'Escape') {
         event.preventDefault();
@@ -203,7 +225,7 @@ export async function confirmModal(title, text, { confirm = 'Confirmer', cancel 
 
 export async function promptModal(title, { label = '', value = '', type = 'text', help = '', confirm = 'Valider' } = {}) {
   const input = el('input', { class: 'text-input', type, value, autofocus: true, autocomplete: 'off' });
-  const body = el('div', {}, label ? el('label', { class: 'field-label', text: label }) : null, input, help ? el('p', { class: 'help', text: help }) : null);
+  const body = el('div', {}, label ? el('label', { class: 'field-label', text: label }) : null, input, help ? el('p', { class: 'help bad', text: help }) : null);
   const result = await modal({
     title,
     body,

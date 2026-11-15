@@ -2,7 +2,7 @@
 // dessin, formes, effacement, placement de la signature et de la signature manuscrite.
 
 import { Api } from './api.js';
-import { el, iconEl, toast, formatDate, clamp } from './ui.js';
+import { el, etat, iconEl, toast, formatDate, clamp } from './ui.js';
 import { Viewer, BASE } from './viewer.js';
 
 // `short` : libellé de la barre d'outils ; `label` : nom complet (infobulle, barre d'options).
@@ -21,8 +21,8 @@ const MODES = ['select', 'edit', 'text', 'note', 'highlight', 'draw', 'shape', '
 
 const COLORS = {
   highlight: [['#f5d04a', 'Jaune'], ['#9fe08a', 'Vert'], ['#8fd3f4', 'Bleu'], ['#f7a8c6', 'Rose'], ['#f6b26b', 'Orange']],
-  pen: [['#c0392b', 'Rouge'], ['#1f5fa8', 'Bleu'], ['#29323a', 'Noir'], ['#287a5d', 'Vert'], ['#a95d37', 'Cuivre']],
-  text: [['#000000', 'Noir'], ['#1f5fa8', 'Bleu'], ['#c0392b', 'Rouge'], ['#287a5d', 'Vert']],
+  pen: [['#c0392b', 'Rouge'], ['#1f5fa8', 'Bleu'], ['#2e3544', 'Bleu foncé'], ['#2f7a57', 'Vert'], ['#ae9367', 'Doré']],
+  text: [['#000000', 'Noir'], ['#1f5fa8', 'Bleu'], ['#c0392b', 'Rouge'], ['#2f7a57', 'Vert']],
   note: [['#f5d04a', 'Jaune'], ['#9fe08a', 'Vert'], ['#8fd3f4', 'Bleu'], ['#f7a8c6', 'Rose']],
 };
 
@@ -113,7 +113,7 @@ export class ToolManager extends EventTarget {
     const bar = document.getElementById('options-bar');
     bar.textContent = '';
     const o = this.opts;
-    const add = (...nodes) => bar.append(...nodes);
+    const add = (...nodes) => bar.append(...nodes.filter(Boolean));
     const group = (label, ...nodes) => el('div', { class: 'opt-group' }, el('span', { class: 'opt-label', text: label }), ...nodes);
     const swatches = (palette, key) => palette.map(([color, name]) => {
       const button = el('button', { class: 'swatch', type: 'button', 'aria-pressed': String(o[key] === color), 'aria-label': name, 'data-tip': name });
@@ -131,13 +131,16 @@ export class ToolManager extends EventTarget {
       return wrap;
     };
     const widths = (key) => seg([[1, 'Fin'], [2, 'Moyen'], [4, 'Épais']], key);
-    const hint = (text) => el('span', { class: 'opt-hint', text });
+    // Le mode d'emploi de l'outil tient dans l'infobulle de son titre, jamais à l'écran.
+    let title = null;
+    const hint = (text) => { if (title) title.dataset.tip = text; return null; };
     const names = { sign: 'Cadre de signature', stamp: 'Signature manuscrite' };
     const name = names[this.tool] || TOOLS.find((t) => t.id === this.tool)?.label;
     if (this.tool !== 'select' && name) {
       const done = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', 'data-tip': 'Revenir à la sélection (Échap)', text: 'Terminé' });
       done.addEventListener('click', () => this.set('select'));
-      add(el('span', { class: 'opt-title', text: name }));
+      title = el('span', { class: 'cote cote--debut cote--court opt-title', text: name });
+      add(title);
       bar.dataset.done = '1';
       this._doneButton = done;
     } else {
@@ -146,8 +149,7 @@ export class ToolManager extends EventTarget {
 
     switch (this.tool) {
       case 'edit':
-        add(hint(''));
-        bar.lastChild.append('Cliquez sur une ligne. ', el('kbd', { text: 'Entrée' }), ' valide, ', el('kbd', { text: 'Échap' }), ' annule, ', el('kbd', { text: 'Tab' }), ' passe à la suivante.');
+        hint('Cliquez sur une ligne · Entrée valide · Échap annule · Tab passe à la suivante');
         break;
       case 'text': {
         const size = el('input', { class: 'num-input', type: 'number', min: '4', max: '144', step: '1', value: String(o.textSize), 'aria-label': 'Taille du texte' });
@@ -195,7 +197,7 @@ export class ToolManager extends EventTarget {
     view.el.querySelector('.page-hint')?.remove();
     if (this.tool !== 'edit' || !view.textData) return;
     if (view.textData.lines.length === 0) {
-      view.el.append(el('div', { class: 'page-hint', text: 'Aucun texte modifiable : page numérisée. Utilisez « Effacer une zone » puis « Ajouter du texte ».' }));
+      view.el.append(el('div', { class: 'page-hint' }, etat('warn', 'Page numérisée', 'Aucun texte modifiable : « Effacer une zone » puis « Ajouter du texte »')));
     }
   }
 

@@ -221,7 +221,7 @@ try:
         plan = edge.js("document.querySelector('.booklet-preview + .help').textContent")
         print("    note :", note)
         print("    plan :", plan)
-        assert ("Recto verso automatique" in note) if canon else ("pas en recto verso" in note)
+        assert ("Recto verso automatique" in note) if canon else ("Pas de recto verso" in note)
         assert "1 feuille A4 pour 2 pages" in plan and "feuille 1 : – | 1 / 2 | –" in plan, plan
         numbers = edge.js("[...document.querySelectorAll('.booklet-preview .booklet-slot')].map(s => s.classList.contains('blank') ? null : Number(s.querySelector('.booklet-number').textContent))")
         assert numbers == [None, 1, 2, None], numbers
@@ -234,7 +234,7 @@ try:
         edge.viewport(1024, 680)
         time.sleep(0.4)
         edge.shot(OUT / "r3-07c-livret-1024.png")
-        reachable = edge.js("""(() => { const m = document.querySelector('.modal'); m.scrollTop = m.scrollHeight;
+        reachable = edge.js("""(() => { const m = document.querySelector('.modal-scroll'); m.scrollTop = m.scrollHeight;
             const b = [...m.querySelectorAll('.btn-primary')][0].getBoundingClientRect();
             return b.bottom <= innerHeight && b.top >= 0 && document.documentElement.scrollWidth <= innerWidth; })()""")
         edge.viewport(1280, 720)

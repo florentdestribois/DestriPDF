@@ -770,14 +770,18 @@ Demande de Florent : « Permet la conversion et assemblage de fichier image ».
 
 Demande : « Oui, release 1.6.0 ».
 
-- [x] Commit `0d9e452` ; `scriptselease.ps1 -Publish` : `build.ps1` complet —
+- [x] Commit `0d9e452` ; `scripts\release.ps1 -Publish` : `build.ps1` complet —
   156 tests, exécutable, fumée de l'exécutable figé 28/28 (images comprises),
   installateur `DestriPDF-1.6.0-installation.exe` (36 700 038 octets), SHA-256
   `CC751B9C5CCA5FB707A8C0FF55888F34E4F85D248F899F1EB2CDE19B8CCFDF41`.
 - [x] `main` et l'étiquette `v1.6.0` poussées ; release publiée :
   https://github.com/florentdestribois/DestriPDF/releases/tag/v1.6.0,
   installateur joint, taille et SHA-256 identiques sur GitHub.
-- [ ] Non installée sur le poste (pas demandé).
+- [x] Installée sur le poste à la demande de Florent (« Oui, installe-la ») :
+  1.5.0 → 1.6.0, installation silencieuse, autorisation Windows acceptée, aucune
+  fenêtre DestriPDF ouverte. Entrée « DestriPDF » 1.6.0 ; 760 fichiers identiques
+  au paquet (plus le désinstalleur). Fumée de l'exécutable installé (mode
+  recette, PFX de test) : 28/28, images comprises.
 
 ### Reste à faire / limites
 
@@ -788,3 +792,78 @@ Demande : « Oui, release 1.6.0 ».
 - [ ] Glisser-déposer d'images depuis l'Explorateur dans la vraie fenêtre : même
   chemin que les PDF, à confirmer hors Edge sans fenêtre.
 - [x] Version 1.6.0 (code, informations de l'exécutable, installateur).
+
+## Refonte graphique « Le Plan », 15 novembre 2026 (version 1.7.0)
+
+Demande de Florent : « réalise une refonte équivalente à celle faite sur
+destricenter pour les applications : DestriPDF, DestriNote, Destriview », menée
+« en autonomie jusqu'à la release ».
+
+### Source de la charte
+
+- Canon du plan B réalisé : `charte/tokens.css`, `charte/signature.css` et
+  `DESIGN.md` de DestriCenter sur `origin/main` (commits `249fbe06`, `bcf2fc58`),
+  lus par `git show` sans rien modifier ; la copie de travail locale de
+  DestriCenter portait encore l'ancienne charte. Recettes de composants :
+  `docs/maquettes/refonte-2026-11` (`CONSIGNES.md`, `kit.css`, `b-plan.html`).
+- Le canon est clair seulement : le thème sombre de DestriPDF est une
+  déclinaison faite ici (fonds bleu foncé, action principale claire, doré clair).
+
+### Réalisé
+
+- [x] Jetons (`static/app.css`, réécrit) : blanc et `#F6F7F9`, bleu foncé
+  `#2E3544`, doré `#AE9367` (texte `#7D6947`), filets `#E3E6EB`/`#C7CCD5`, états
+  `#2F7A57`, `#A85A16`, `#B4503C` ; tout à plat (plaque brossée, gravure, relief
+  usiné, rails pleins et fond chaud retirés) ; rayons de 3 px ; mouvements de
+  140, 220 et 360 ms sans rebond.
+- [x] Vocabulaire du plan (`ui.cote`, `ui.cartouche`, `ui.etat`) : cotes pour
+  les titres de groupe, l'outil et l'onglet actifs, le trait d'insertion des
+  pages ; repères « + » sur l'accueil, les boîtes, le voile du glisser et le
+  cadre de signature ; cartouches (Compresser, À propos, rapport de signature) ;
+  crochet doré de sélection (vignette, certificat, niveau) ; états en un signe et
+  deux mots (signatures, certificats, cadre, imprimante, états vides).
+- [x] Textes : plus aucune phrase d'explication à l'écran (accueil, barre
+  d'options, panneau Signer, boîtes Imprimer, Compresser, Exporter, Réglages,
+  dessin de la signature, voile du glisser) : libellés courts, détail en
+  infobulle ; récents : nom du dossier seul, chemin en infobulle ; notifications
+  raccourcies.
+- [x] Polices embarquées : Abhaya Libre Medium (500) et Barlow Condensed Medium
+  remplacent Abhaya Libre Bold et Barlow Condensed SemiBold (retirées du paquet,
+  `[InstallDelete]` pour les mises à jour) ; contrôle ajouté au test de fumée.
+- [x] Icône (`make_icon.py`, `assets/destripdf.ico`, `static/icon.svg`, emblème du
+  bandeau) et fond de la fenêtre au démarrage (`app.py`) à la nouvelle charte.
+- [x] Défaut trouvé en recette et corrigé : quand Windows réduit les animations
+  (cas de ce poste), la règle « 1 ms » faisait transiter la taille des pages ; le
+  zoom se recalait sur l'ancienne mise en page (retour d'« Organiser » sur la
+  mauvaise page). Durée de transition nulle dans ce mode.
+- [x] Version 1.7.0 (code, informations de l'exécutable, installateur) ; README,
+  plan et consignes à jour.
+
+### Validations
+
+- [x] Tests : 156 passés.
+- [x] Recette Edge : 47 parcours sur 47 (`recette_output\20261115-185637`),
+  captures relues en 1024×680, 1280×720, 1920×1080 et en sombre. Recette
+  adaptée : boîte défilante `.modal-scroll`, titres du voile du glisser, état
+  « Pas de recto verso » ; `cdp.shot` attend la fin des mouvements d'entrée.
+  Trouvés à la relecture et corrigés : chemin complet dans la notification de
+  l'export JPG (nom du dossier seul), confiance dite deux fois dans le rapport
+  de signature.
+- [x] `scripts\recette\captures_charte.py` (nouveau) : 33 captures des écrans hors
+  parcours (menus, À propos, Réglages, Export, voile du glisser, attente, erreur,
+  commentaires, signets, outils, Signer, Organiser, confirmation, accueil), en
+  clair et en sombre ; console propre, aucun débordement (dossier `charte`).
+- [x] Vraie fenêtre WebView2 lancée depuis les sources (réglages isolés, PFX de
+  test) : document ouvert et accueil capturés (`charte\f-fenetre-*.png`).
+
+### Reste à faire / limites
+
+- [x] Mouvements : ce poste réduit les animations de Windows, l'application les
+  annule donc. Recette rejouée avec les mouvements actifs
+  (`DESTRIPDF_RECETTE_MOTION=1`, émulation contrôlée dans la page : boutons à
+  140 ms, feuille à 360 ms) : 47 parcours sur 47.
+- [x] Polices embarquées chargées par la page (`document.fonts`) : Abhaya Libre
+  500, Barlow Condensed 500, Roboto 400 et 500.
+- [ ] Mouvements non regardés à l'œil sur un poste où Windows les laisse actifs.
+- [ ] Thème sombre : déclinaison propre à DestriPDF, à faire valider par Florent.
+- [ ] Non installée sur le poste (pas demandé).

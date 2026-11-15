@@ -304,7 +304,7 @@ try:
             edge.shot(OUT / "r4-10-accueil-depot.png")
 
         edge.drop_files([LOT / "2 - memoire.pdf", LOT / "10 - annexe.pdf", LOT / "1 - lettre.pdf"], ((x0 + x1) / 2, y0 + 60), hover)
-        assert captured["title"] == "Déposez les 3 fichiers pour les assembler", captured
+        assert captured["title"] == "Assembler 3 fichiers", captured
         edge.wait_for("window.__app.doc && window.__app.doc.name === '1 - lettre - assemblé.pdf'", timeout=20)
         edge.wait_for("document.body.classList.contains('organizing')", timeout=10)
         assert edge.js("window.__app.doc.page_count") == 6
@@ -321,7 +321,7 @@ try:
             captured["title"] = edge.js("document.getElementById('drop-title').textContent")
 
         edge.drop_files([IMAGES / "chantier.jpg"], ((x0 + x1) / 2, y0 + 60), hover)
-        assert captured["title"] == "Déposez le fichier pour l'ouvrir", captured
+        assert captured["title"] == "Ouvrir le fichier", captured
         edge.wait_for("window.__app.doc && window.__app.doc.name === 'chantier.pdf'", timeout=20)
         doc = edge.js("window.__app.doc")
         assert doc["page_count"] == 1 and doc["dirty"] and not doc["path"], doc
@@ -382,7 +382,7 @@ try:
         edge.viewport(1024, 680)
         time.sleep(0.3)
         edge.shot(OUT / "r4-12-compresser-1024.png")
-        reachable = edge.js("""(() => { const m = document.querySelector('.modal'); m.scrollTop = m.scrollHeight;
+        reachable = edge.js("""(() => { const m = document.querySelector('.modal-scroll'); m.scrollTop = m.scrollHeight;
             const b = document.querySelector('.modal-actions .btn-primary').getBoundingClientRect();
             return b.bottom <= innerHeight && b.top >= 0 && document.documentElement.scrollWidth <= innerWidth; })()""")
         edge.viewport(1280, 720)

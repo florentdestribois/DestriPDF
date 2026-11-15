@@ -1,7 +1,7 @@
 // Panneaux : vignettes et signets (gauche) ; commentaires, signatures et signature (droite).
 
 import { Api } from './api.js';
-import { el, iconEl, toast, modal, busy, formatDate, showMenu, promptModal } from './ui.js';
+import { cote, el, etat, iconEl, formatDate, showMenu } from './ui.js';
 import { PageSorter } from './pagesorter.js';
 
 const THUMB_W = 132;
@@ -120,7 +120,7 @@ export class Sidebar {
   renderToc(doc) {
     this.toc.textContent = '';
     if (!doc.toc.length) {
-      this.toc.append(el('p', { class: 'empty-note', text: 'Ce document ne contient pas de signets.' }));
+      this.toc.append(el('p', { class: 'empty-note' }, etat('', 'Aucun signet')));
       return;
     }
     for (const [level, title, page] of doc.toc) {
@@ -203,20 +203,20 @@ export class Panel {
       annots = (await Api.get('api/annotations')).annots || [];
     } catch (err) {
       this.body.textContent = '';
-      this.body.append(el('p', { class: 'empty-note', text: err.message }));
+      this.body.append(el('p', { class: 'empty-note help bad', text: err.message }));
       return;
     }
     if (this.renderToken !== token || this.tab !== 'comments') return;
     this.body.textContent = '';
     if (!annots.length) {
-      this.body.append(el('p', { class: 'empty-note', text: 'Aucune annotation. Les notes, surlignages, textes ajoutés et dessins apparaissent ici.' }));
+      this.body.append(el('p', { class: 'empty-note' }, etat('', 'Aucune annotation', 'Notes, surlignages, textes ajoutés et dessins apparaissent ici')));
       return;
     }
     let page = -1;
     for (const a of annots) {
       if (a.page !== page) {
         page = a.page;
-        this.body.append(el('div', { class: 'comment-group', text: `Page ${page + 1}` }));
+        this.body.append(cote(`Page ${page + 1}`, { cls: 'comment-group' }));
       }
       const dot = el('span', { class: 'comment-dot' });
       dot.style.background = a.color || 'var(--line-strong)';
@@ -254,34 +254,34 @@ export class Panel {
   renderSignatures(fromLoad = false) {
     this.body.textContent = '';
     if (!fromLoad || this.reports === null) {
-      this.body.append(el('div', { class: 'notice' }, el('span', { text: 'Vérification des signatures…' })));
+      this.body.append(el('p', { class: 'empty-note' }, etat('', 'Vérification…')));
       if (!fromLoad) this.loadReports();
       return;
     }
     if (!this.reports.length) {
-      this.body.append(el('p', { class: 'empty-note', text: 'Ce document ne contient aucune signature électronique.' }));
+      this.body.append(el('p', { class: 'empty-note' }, etat('', 'Aucune signature')));
       return;
     }
     for (const r of this.reports) {
-      const iconName = r.status === 'valid' ? 'shield' : r.status === 'warning' ? 'shieldWarn' : 'shieldBad';
-      const word = r.status === 'valid' ? 'Valide' : r.status === 'warning' ? 'À vérifier' : 'Invalide';
+      const state = r.status === 'valid' ? etat('ok', 'Valide') : r.status === 'warning' ? etat('warn', 'À vérifier') : etat('bad', 'Invalide');
+      // Valeur courte à l'écran, explication dans l'infobulle.
+      const fact = (label, text, tip = null) => [el('dt', { text: label }), el('dd', { text, 'data-tip': tip || undefined })];
       const card = el('div', { class: `sig-report ${r.status}`, role: 'button', tabindex: '0' },
-        el('div', { class: 'sig-report-head' }, iconEl(iconName), el('span', { class: 'sig-report-name', text: r.signer || 'Signataire inconnu' }),
-          el('span', { class: `badge ${r.status === 'valid' ? 'ok' : r.status === 'warning' ? 'warn' : 'bad'}`, text: word })),
+        el('div', { class: 'sig-report-head' }, el('span', { class: 'sig-report-name', text: r.signer || 'Signataire inconnu' }), state),
         el('div', { class: 'sig-report-summary', text: r.summary }),
         el('dl', {},
-          el('dt', { text: 'Date' }), el('dd', { text: formatDate(r.signed_at) || '—' }),
-          el('dt', { text: 'Émetteur' }), el('dd', { text: r.issuer || '—' }),
-          r.reason ? el('dt', { text: 'Motif' }) : null, r.reason ? el('dd', { text: r.reason }) : null,
-          r.location ? el('dt', { text: 'Lieu' }) : null, r.location ? el('dd', { text: r.location }) : null,
-          el('dt', { text: 'Certificat' }), el('dd', { text: r.qualified ? 'Qualifié eIDAS' : 'Non qualifié' }),
-          el('dt', { text: 'Confiance' }), el('dd', { text: r.trust_detail || '—' }),
-          el('dt', { text: 'Révocation' }), el('dd', { text: r.ltv ? 'État intégré : vérifiable à long terme (LTV)' : 'Non intégré : le lecteur PDF doit interroger l\'autorité' }),
-          el('dt', { text: 'Heure' }), el('dd', {
-            text: r.timestamp === 'trusted' ? `Attestée par une autorité d'horodatage${r.timestamp_at ? ` (${formatDate(r.timestamp_at)})` : ''}`
-              : r.timestamp === 'unverified' ? 'Jeton d\'horodatage présent, autorité non vérifiée'
-                : 'Horloge de l\'ordinateur du signataire',
-          })));
+          fact('Date', formatDate(r.signed_at) || '—'),
+          fact('Émetteur', r.issuer || '—'),
+          r.reason ? fact('Motif', r.reason) : null,
+          r.location ? fact('Lieu', r.location) : null,
+          fact('Certificat', r.qualified ? 'Qualifié eIDAS' : 'Non qualifié'),
+          // Pas de répétition : la confiance déjà dite par le résumé n'est pas redite.
+          r.trust_detail && String(r.summary || '').toLowerCase().includes(r.trust_detail.replace(/\.$/, '').toLowerCase()) ? null : fact('Confiance', r.trust_detail || '—'),
+          r.ltv ? fact('Révocation', 'Intégrée (LTV)', 'État de révocation intégré : vérifiable à long terme')
+            : fact('Révocation', 'Non intégrée', 'Le lecteur PDF doit interroger l\'autorité de certification'),
+          r.timestamp === 'trusted' ? fact('Heure', `Horodatée${r.timestamp_at ? ` ${formatDate(r.timestamp_at)}` : ''}`, 'Attestée par une autorité d\'horodatage')
+            : r.timestamp === 'unverified' ? fact('Heure', 'Horodatage non vérifié', 'Jeton d\'horodatage présent, autorité non vérifiée')
+              : fact('Heure', 'Horloge du poste', 'Horloge de l\'ordinateur du signataire')));
       if (r.errors?.length) card.append(el('div', { class: 'sig-report-summary', text: r.errors.join(' ') }));
       const go = () => { if (r.page_index !== null && r.page_index !== undefined && r.rect) { this.app.viewer.scrollToPage(r.page_index); this.app.viewer.scrollToRect(r.page_index, r.rect); } };
       card.addEventListener('click', go);
@@ -322,7 +322,7 @@ export class Panel {
     body.textContent = '';
 
     // Certificat
-    const certSection = el('div', { class: 'panel-section' }, el('span', { class: 'field-label', text: 'Certificat de signature' }));
+    const certSection = el('div', { class: 'panel-section' }, cote('Certificat'));
     const list = el('div', { class: 'cert-list', role: 'radiogroup', 'aria-label': 'Certificat' });
     certSection.append(list);
     const refresh = el('button', { class: 'btn btn-ghost btn-sm', type: 'button' }, iconEl('rotate'), el('span', { text: 'Actualiser' }));
@@ -333,25 +333,25 @@ export class Panel {
     });
     body.append(certSection);
     if (this.certs === null) {
-      list.append(el('div', { class: 'notice' }, el('span', { text: 'Recherche des certificats…' })));
+      list.append(el('div', { class: 'notice' }, etat('', 'Recherche…')));
       this.loadCertificates().then(() => { if (this.tab === 'sign') this.renderSign(); });
     } else if (!this.certs.length) {
-      list.append(el('div', { class: 'notice warn' },
-        el('div', { text: this.certError || 'Aucun certificat de signature trouvé.' }),
-        el('div', { class: 'help', text: 'Branchez votre clé USB de signature, attendez quelques secondes puis cliquez sur « Actualiser ». Le logiciel de la clé (fourni par votre autorité de certification) doit être installé.' })));
+      list.append(el('div', { class: 'notice' },
+        etat('warn', 'Aucun certificat', 'Branchez la clé de signature, attendez quelques secondes, puis « Actualiser ». Le logiciel de la clé doit être installé.'),
+        this.certError ? el('div', { class: 'help bad', text: this.certError }) : null));
     } else {
       for (const c of this.certs) {
         const badges = el('span', { class: 'badges' });
-        if (c.qualified) badges.append(el('span', { class: 'badge ok', text: 'Qualifié eIDAS' }));
-        if (c.hardware) badges.append(el('span', { class: 'badge', text: 'Clé matérielle' }));
-        if (c.expired) badges.append(el('span', { class: 'badge bad', text: 'Expiré' }));
-        else if (!c.can_sign) badges.append(el('span', { class: 'badge warn', text: 'Inutilisable' }));
+        if (c.qualified) badges.append(etat('ok', 'Qualifié eIDAS'));
+        if (c.hardware) badges.append(etat('', 'Clé matérielle'));
+        if (c.expired) badges.append(etat('bad', 'Expiré'));
+        else if (!c.can_sign) badges.append(etat('warn', 'Inutilisable'));
         const item = el('button', {
           class: `cert${c.can_sign ? '' : ' disabled'}`, type: 'button', role: 'radio', 'aria-checked': String(this.certId === c.id), disabled: !c.can_sign || undefined,
         }, el('span', { class: 'cert-radio' }), el('span', { class: 'cert-main' },
           el('span', { class: 'cert-name', text: c.subject }),
           el('span', { class: 'cert-meta', text: [c.organization, c.issuer].filter(Boolean).join(' — ') }),
-          el('span', { class: 'cert-meta', text: `Valable jusqu'au ${formatDate(c.not_after, false)}` }),
+          el('span', { class: 'cert-meta', text: `Jusqu'au ${formatDate(c.not_after, false)}` }),
           badges));
         item.addEventListener('click', () => { this.certId = c.id; this.renderSign(); });
         list.append(item);
@@ -360,7 +360,7 @@ export class Panel {
     certSection.append(el('div', { class: 'panel-actions' }, refresh));
 
     // Apparence
-    const appearance = el('div', { class: 'panel-section' }, el('span', { class: 'field-label', text: 'Apparence' }));
+    const appearance = el('div', { class: 'panel-section' }, cote('Apparence'));
     const visible = el('input', { type: 'checkbox' });
     visible.checked = draft.visible;
     visible.addEventListener('change', () => {
@@ -373,17 +373,18 @@ export class Panel {
       }
       this.renderSign();
     });
-    appearance.append(el('label', { class: 'check' }, visible, el('span', { text: 'Signature visible sur la page' })));
+    appearance.append(el('label', { class: 'check' }, visible, el('span', { text: 'Signature visible' })));
     if (draft.visible) {
       const frame = this.app.tools.signFrame;
-      const place = el('button', { class: 'btn btn-secondary btn-sm', type: 'button' }, iconEl('rect'), el('span', { text: frame ? 'Déplacer le cadre' : 'Placer le cadre' }));
+      const place = el('button', { class: 'btn btn-secondary btn-sm', type: 'button', 'data-tip': 'Tracez le cadre sur la page, ou cliquez à son emplacement' },
+        iconEl('rect'), el('span', { text: frame ? 'Déplacer le cadre' : 'Placer le cadre' }));
       place.addEventListener('click', () => this.app.tools.set('sign'));
       appearance.append(el('div', { class: 'sign-place' }, place,
-        el('span', { class: 'sign-place-state', text: frame ? `Cadre placé page ${frame.page + 1}.` : 'Tracez le cadre sur la page, ou cliquez à son emplacement.' })));
+        frame ? etat('ok', `Page ${frame.page + 1}`) : etat('warn', 'À placer')));
       const withImage = el('input', { type: 'checkbox' });
       withImage.checked = draft.withImage;
       withImage.addEventListener('change', () => { draft.withImage = withImage.checked; this.renderSign(); });
-      appearance.append(el('label', { class: 'check' }, withImage, el('span', { text: 'Ajouter mon image de signature manuscrite' })));
+      appearance.append(el('label', { class: 'check' }, withImage, el('span', { text: 'Image manuscrite' })));
       if (draft.withImage) appearance.append(this.signatureImageControls());
     }
     body.append(appearance);
@@ -400,22 +401,21 @@ export class Panel {
     body.append(details);
 
     // Action
-    const sign = el('button', { class: 'btn btn-primary', type: 'button', disabled: !this.certId || undefined }, iconEl('sign'), el('span', { text: 'Signer et enregistrer' }));
+    // Le détail (PIN, nouveau fichier, LTV, horodatage) tient dans l'infobulle du bouton.
+    const facts = ['Code PIN demandé par la fenêtre de la clé', 'Nouveau fichier : l\'original reste intact'];
+    if (settings.sign_ltv !== false) facts.push('État de révocation intégré (LTV) : Internet au moment de signer');
+    if (settings.timestamp_url) facts.push('Signature horodatée');
+    if (this.app.doc?.dirty) facts.push('Modifications en cours incluses');
+    const sign = el('button', { class: 'btn btn-primary', type: 'button', disabled: !this.certId || undefined, 'data-tip': facts.join(' · ') },
+      iconEl('sign'), el('span', { text: 'Signer et enregistrer' }));
     sign.addEventListener('click', () => this.app.signDocument(this.signPayload()));
     body.append(el('div', { class: 'panel-actions panel-actions-sticky' }, sign));
-    const notes = el('div', { class: 'panel-section' });
-    notes.append(el('p', { class: 'help', text: 'Le code PIN de votre clé est demandé par la fenêtre de son logiciel. Le document signé est enregistré dans un nouveau fichier : l\'original reste intact.' }));
-    if (settings.sign_ltv !== false) notes.append(el('p', { class: 'help', text: 'Comme Acrobat, l\'état de révocation de votre certificat est demandé à votre autorité de certification et intégré au document (validation à long terme) : connexion Internet utilisée au moment de signer.' }));
-    if (settings.timestamp_url) notes.append(el('p', { class: 'help', text: `Horodatage : ${settings.timestamp_url}` }));
-    if (this.app.doc?.dirty) notes.append(el('p', { class: 'help', text: 'Les modifications en cours sont incluses dans le document signé.' }));
-    body.append(notes);
 
     // Signature manuscrite seule
-    const simple = el('div', { class: 'panel-section' }, el('span', { class: 'field-label', text: 'Signature manuscrite seule' }),
-      el('p', { class: 'help', text: 'Image de votre signature posée sur la page, sans valeur de signature électronique.' }));
-    const stamp = el('button', { class: 'btn btn-ghost btn-sm', type: 'button' }, iconEl('image'), el('span', { text: 'Apposer mon image de signature' }));
+    const simple = el('div', { class: 'panel-section' }, cote('Image seule'));
+    const stamp = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', 'data-tip': 'Pose l\'image de votre signature sur la page' }, iconEl('image'), el('span', { text: 'Apposer l\'image' }));
     stamp.addEventListener('click', () => this.app.placeHandwritten());
-    simple.append(el('div', { class: 'panel-actions' }, stamp));
+    simple.append(el('div', { class: 'panel-actions' }, stamp, etat('warn', 'Sans valeur électronique')));
     body.append(simple);
     body.scrollTop = keepScroll;
   }
@@ -428,7 +428,7 @@ export class Panel {
       img.src = `api/signature-image?t=${Date.now()}`;
       wrap.append(img);
     } else {
-      wrap.append(el('span', { class: 'help', text: 'Aucune image enregistrée.' }));
+      wrap.append(etat('', 'Aucune image'));
     }
     const draw = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: has ? 'Refaire' : 'Dessiner' });
     draw.addEventListener('click', async () => { if (await this.app.drawSignature()) this.renderSign(); });

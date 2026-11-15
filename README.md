@@ -16,7 +16,7 @@ marchés publics).
 
 ## Installation
 
-1. Lancer `installer_output\DestriPDF-1.3.3-installation.exe` (ou l'installateur
+1. Lancer `installer_output\DestriPDF-1.7.0-installation.exe` (ou l'installateur
    joint à la release GitHub de la version) et accepter la
    demande d'autorisation de Windows. DestriPDF s'installe pour tous les
    utilisateurs du poste dans `C:\Program Files\DestriPDF` (« Programmes » dans
@@ -94,7 +94,7 @@ page.
 - Choisir des pages : clic (une page), Ctrl+clic (ajoute ou retire une page),
   Maj+clic (toutes les pages depuis la dernière cliquée), Ctrl+Maj+clic (ajoute
   cette plage), Ctrl+A (toutes). Au clavier : flèches, Maj+flèches.
-- Déplacer : glisser une des pages choisies ; un trait cuivre montre où elles
+- Déplacer : glisser une des pages choisies ; un trait doré montre où elles
   iront. Elles restent dans l'ordre du document, et Ctrl+Z annule le tout.
 - Pivoter ou supprimer les pages choisies : boutons de la barre, clic droit ou
   Suppr.
@@ -145,12 +145,12 @@ pas : ses signatures seraient invalidées (compresser avant de signer).
 
 Menu ⋯ › Imprimer (Ctrl+P) ouvre la boîte Imprimer de DestriPDF : imprimante
 du poste (la dernière utilisée est proposée), pages (toutes, page affichée ou
-« 1-3, 5 »), copies assemblées. « Préférences de l'imprimante… » ouvre la
+« 1-3, 5 »), copies assemblées. « Préférences… » ouvre la
 fenêtre de réglages du pilote (recto verso, bac, couleur, agrafage), gardés
 jusqu'à la fermeture de DestriPDF.
 
-Pages normales : papier A4 ou A3 et recto verso (recto seul, bord long « comme
-un livre », bord court « comme un bloc-notes ») se choisissent dans la boîte,
+Pages normales : papier A4 ou A3 et recto verso (recto seul, bord long comme
+un livre, bord court comme un bloc-notes) se choisissent dans la boîte,
 qui s'ouvre sur les réglages en cours du pilote (Canon : A4, recto verso bord
 long). Les pages sont ajustées au papier choisi (une page A4 remplit une feuille
 A3). Les réglages sont relus dans le pilote avant l'envoi ; un réglage refusé
@@ -333,7 +333,8 @@ release indique l'empreinte SHA-256 de l'installateur.
 - `destripdf/signing/pades.py` : signature PAdES (pyHanko), apparence visible
   à la manière d'Acrobat, état de révocation intégré (LTV), vérification.
 - `destripdf/static/` : interface (modules JavaScript sans framework, charte
-  DestriMix, polices locales) ; `pagesorter.js` (sélection et glisser-déposer
+  DestriMix « Le Plan » : jetons de `app.css`, cotes, repères, cartouches et
+  états de `ui.js`, polices locales) ; `pagesorter.js` (sélection et glisser-déposer
   des pages, partagés par les vignettes et `organizer.js`, la vue « Organiser »).
 
 Mode recette : `--serve --port N` sert l'interface à un navigateur ;

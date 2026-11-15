@@ -37,7 +37,9 @@ une fenêtre pywebview (Edge WebView2). Voir `README.md` pour l'architecture.
   `X-DestriPDF` et `Origin` pour toute mutation, CSP stricte (aucun style ni
   script en ligne, aucune ressource externe). Toute route nouvelle reçoit un
   test, y compris de refus.
-- Interface : charte DestriMix (support `atelier`, `graphite` en sombre), jetons
+- Interface : charte DestriMix « Le Plan » (à plat, bleu foncé et doré, rayons
+  de 3 px ; cote, repères, cartouche, état : `ui.cote`, `ui.cartouche`,
+  `ui.etat`), aucune phrase d'explication à l'écran (infobulle `data-tip`), jetons
   CSS de `static/app.css`, modales maison (`ui.modal`), jamais
   `window.alert/confirm`. Échapper toute donnée issue du PDF (`textContent`,
   jamais `innerHTML`).

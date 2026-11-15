@@ -82,7 +82,8 @@ def main(base: str, workdir: str) -> int:
     status, body, ctype = c.call("GET", "", raw=True)
     check("page d'accueil", status == 200 and b"DestriPDF" in body)
     for asset in ("static/app.css", "static/js/app.js", "static/js/organizer.js", "static/js/pagesorter.js",
-                  "static/fonts/Roboto-Regular.ttf", "static/icon.svg"):
+                  "static/fonts/Roboto-Regular.ttf", "static/fonts/AbhayaLibre-Medium.ttf",
+                  "static/fonts/BarlowCondensed-Medium.ttf", "static/icon.svg"):
         status, body, ctype = c.call("GET", asset, raw=True)
         check(f"ressource {asset}", status == 200 and len(body) > 100, f"{status}")
     status, data = c.call("POST", "api/open", {"path": str(work / "devis.pdf")})

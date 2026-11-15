@@ -221,7 +221,7 @@ def main(argv: list[str] | None = None) -> int:
         width=1280,
         height=860,
         min_size=(900, 600),
-        background_color="#F8F6F2",
+        background_color="#F6F7F9",
         text_select=True,
     )
     state.dialogs = WindowDialogs(window)

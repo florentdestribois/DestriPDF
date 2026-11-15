@@ -5,7 +5,7 @@
 ; Prérequis : dist\DestriPDF construit par PyInstaller (DestriPDF.spec).
 
 #define AppName "DestriPDF"
-#define AppVersion "1.6.0"
+#define AppVersion "1.7.0"
 #define AppPublisher "Menuiserie Destribois"
 #define AppExe "DestriPDF.exe"
 #define ProgId "DestriPDF.Document"
@@ -46,6 +46,9 @@ Name: "desktopicon"; Description: "Créer un raccourci sur le Bureau"; GroupDesc
 [InstallDelete]
 ; Fichiers d'une version précédente retirés du paquet (mise en page livret de la 1.3.0).
 Type: files; Name: "{app}\_internal\destripdf\static\js\booklet.js"
+; Polices de l'ancienne charte, remplacées en 1.7.0 (Abhaya Libre Medium, Barlow Condensed Medium).
+Type: files; Name: "{app}\_internal\destripdf\static\fonts\AbhayaLibre-Bold.ttf"
+Type: files; Name: "{app}\_internal\destripdf\static\fonts\BarlowCondensed-SemiBold.ttf"
 
 [Files]
 Source: "dist\DestriPDF\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

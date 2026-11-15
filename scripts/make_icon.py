@@ -10,13 +10,14 @@ import pymupdf as fitz
 ROOT = Path(__file__).resolve().parent.parent
 SIZES = (16, 20, 24, 32, 40, 48, 64, 128, 256)
 
-# Emblème sur fond graphite arrondi, lisible aux petites tailles.
+# Emblème sur fond bleu foncé aux angles presque vifs (charte « Le Plan »), feuille
+# blanche, plume et trait dorés ; lisible aux petites tailles.
 SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-<rect x="2" y="2" width="60" height="60" rx="11" fill="#303a42"/>
-<path d="M18 10h20l10 10v34H18z" fill="#f7f4ef"/>
-<path d="M38 10v10h10" fill="#d9a782"/>
-<path d="M24 45c4.6-2.9 7.2-7.4 10.4-13.2l5.2 3c-3.2 5.9-6.8 10-12.4 12.7z" fill="#a95d37"/>
-<path d="M24 50h20" stroke="#a95d37" stroke-width="2.6" stroke-linecap="round"/>
+<rect x="2" y="2" width="60" height="60" rx="5" fill="#2e3544"/>
+<path d="M18 10h20l10 10v34H18z" fill="#ffffff"/>
+<path d="M38 10v10h10" fill="#c9b28c"/>
+<path d="M24 45c4.6-2.9 7.2-7.4 10.4-13.2l5.2 3c-3.2 5.9-6.8 10-12.4 12.7z" fill="#ae9367"/>
+<path d="M24 50h20" stroke="#ae9367" stroke-width="2.6" stroke-linecap="round"/>
 </svg>"""
 
 

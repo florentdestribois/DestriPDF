@@ -103,14 +103,13 @@ export class Organizer {
     const done = el('button', { class: 'btn btn-primary btn-sm', type: 'button', 'data-tip': 'Revenir à la lecture (Échap)', text: 'Terminé' });
     done.addEventListener('click', () => this.close());
     this.bar.replaceChildren(
-      el('span', { class: 'opt-title', text: 'Organiser les pages' }),
+      el('span', { class: 'cote cote--debut cote--court opt-title', text: 'Organiser' }),
       add,
       el('div', { class: 'opt-group' },
         button('rotateLeft', 'Pivoter à gauche', 'Pivoter la sélection à gauche', (pages) => this.app.rotatePages(pages, -90)),
         button('rotate', 'Pivoter à droite', 'Pivoter la sélection à droite', (pages) => this.app.rotatePages(pages, 90)),
         button('trash', 'Supprimer', 'Supprimer la sélection (Suppr)', (pages) => this.app.deletePages(pages))),
       this.status,
-      el('span', { class: 'opt-hint org-hint', text: 'Ctrl+clic ou Maj+clic : plusieurs pages · glisser : déplacer' }),
       el('div', { class: 'opt-group org-sizes' }, el('span', { class: 'opt-label', text: 'Vignettes' }), sizes),
       done,
     );

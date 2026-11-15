@@ -131,8 +131,15 @@ recomposition, horodatage par défaut (réglage facultatif), PAdES-LTA
 - Annotations sur page pivotée : coordonnées échangées dans l'espace affiché ;
   quadrilatères de surlignage transformés coin par coin ; image de signature
   pré-tournée ; texte libre composé avec `rotate`.
-- Interface : SPA vanilla (modules ES), charte DestriMix (thème `atelier`,
-  `graphite` en sombre), polices locales, aucune ressource externe. Barre
+- Interface : SPA vanilla (modules ES), charte DestriMix « Le Plan » (refonte
+  du 15 novembre 2026, à l'image du plan B de DestriCenter) : fonds blanc et
+  gris-bleu très clair, bleu foncé pour le texte et l'action, doré pour les
+  filets, tout à plat, rayons de 3 px ; vocabulaire du plan (cote, repères,
+  cartouche, crochet de sélection, état en un signe et deux mots) ; aucune
+  phrase d'explication à l'écran (infobulles) ; mouvements de 140, 220 et
+  360 ms, annulés si Windows réduit les animations ; thème sombre décliné du
+  bleu foncé. Polices locales (Abhaya Libre 500, Roboto, Barlow Condensed 500),
+  aucune ressource externe. Barre
   d'outils à libellés courts, pastille de navigation et de zoom en bas du
   document, barre d'options propre à l'outil actif. Sélection de pages
   partagée (`PageSelection`) par les vignettes et « Organiser » (`PageSorter` :

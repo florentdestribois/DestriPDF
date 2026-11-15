@@ -53,6 +53,10 @@ class Edge:
         self.call("Page.enable")
         self.call("Log.enable")
         self.viewport(width, height)
+        # DESTRIPDF_RECETTE_MOTION=1 : mouvements joués même si Windows réduit les
+        # animations (cas d'un poste qui les désactive : sinon jamais recettés).
+        if os.environ.get("DESTRIPDF_RECETTE_MOTION") == "1":
+            self.call("Emulation.setEmulatedMedia", features=[{"name": "prefers-reduced-motion", "value": "no-preference"}])
 
     # -- protocole --
 
@@ -132,6 +136,13 @@ class Edge:
         return box
 
     def shot(self, path: str | Path):
+        # Les mouvements d'entrée (feuille, menu, notification : 360 ms au plus) se
+        # terminent avant la capture ; l'indicateur d'attente, sans fin, est ignoré.
+        try:
+            self.js("""Promise.race([new Promise(r => setTimeout(r, 900)), Promise.allSettled(document.getAnimations()
+                .filter(a => a.effect && a.effect.getComputedTiming().iterations !== Infinity).map(a => a.finished))]).then(() => true)""")
+        except RuntimeError:
+            pass
         data = self.call("Page.captureScreenshot", format="png")["data"]
         Path(path).write_bytes(base64.b64decode(data))
         return path

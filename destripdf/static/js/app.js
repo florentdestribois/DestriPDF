@@ -3,7 +3,7 @@
 
 import { Api, ApiError } from './api.js';
 import {
-  busy, closeMenu, confirmModal, el, formatDate, formatSize, hydrateIcons, iconEl, installTooltips,
+  busy, cartouche, closeMenu, confirmModal, cote, el, etat, formatDate, formatSize, hydrateIcons, iconEl, installTooltips,
   isModalOpen, modal, promptModal, showMenu, toast,
 } from './ui.js';
 import { Viewer } from './viewer.js';
@@ -222,7 +222,7 @@ class App {
     const doc = this.doc;
     const title = $('doc-title');
     title.textContent = doc ? doc.name : 'Aucun document';
-    if (doc?.dirty) title.append(el('span', { class: 'dirty-mark', 'aria-label': 'modifié', text: '●' }));
+    if (doc?.dirty) title.append(el('span', { class: 'dirty-mark', 'aria-label': 'modifié', 'data-tip': 'Modifié, à enregistrer' }));
     document.title = doc ? `${doc.dirty ? '• ' : ''}${doc.name} — DestriPDF` : 'DestriPDF';
     const undo = $('btn-undo');
     const redo = $('btn-redo');
@@ -265,11 +265,12 @@ class App {
     const host = $('recent');
     host.textContent = '';
     if (!recent.length) return;
-    host.append(el('h2', { class: 'recent-title', text: 'Documents récents' }));
+    host.append(cote('Récents', { tag: 'h2', cls: 'recent-title' }));
     const list = el('ul', { class: 'recent-list' });
     for (const item of recent) {
-      const dir = item.path.replace(/[\\/][^\\/]*$/, '');
-      const open = el('button', { class: 'recent-open', type: 'button', disabled: !item.exists || undefined, title: item.exists ? item.path : 'Fichier introuvable' },
+      // À l'écran : le nom du dossier seul ; le chemin complet reste dans l'infobulle.
+      const dir = item.path.replace(/[\\/][^\\/]*$/, '').split(/[\\/]/).pop();
+      const open = el('button', { class: 'recent-open', type: 'button', disabled: !item.exists || undefined, 'data-tip': item.exists ? item.path : 'Fichier introuvable' },
         iconEl('file'),
         el('span', { class: 'recent-texts' }, el('span', { class: 'recent-name', text: item.name }), el('span', { class: 'recent-dir', text: dir })),
         el('span', { class: 'recent-date', text: formatDate(new Date(item.opened_at * 1000).toISOString(), false) }));
@@ -291,7 +292,7 @@ class App {
     if (!this.doc?.dirty) return true;
     const choice = await modal({
       title: 'Enregistrer les modifications ?',
-      text: `« ${this.doc.name} » a été modifié depuis son dernier enregistrement.`,
+      text: `« ${this.doc.name} »`,
       buttons: [
         { label: 'Annuler', value: 'cancel' },
         { spacer: true },
@@ -350,9 +351,9 @@ class App {
   }
 
   async askPassword(name) {
-    let message = name ? `« ${name} » est protégé par un mot de passe.` : 'Ce PDF est protégé par un mot de passe.';
+    let message = '';
     for (;;) {
-      const password = await promptModal('Mot de passe', { label: 'Mot de passe du document', type: 'password', help: message, confirm: 'Ouvrir' });
+      const password = await promptModal('Mot de passe', { label: name || 'Document protégé', type: 'password', help: message, confirm: 'Ouvrir' });
       if (password === null) {
         await Api.post('api/cancel-pending').catch(() => {});
         return;
@@ -366,7 +367,7 @@ class App {
           toast(err.message, 'error');
           return;
         }
-        message = 'Mot de passe incorrect. Réessayez.';
+        message = 'Mot de passe incorrect';
       }
     }
   }
@@ -412,7 +413,7 @@ class App {
   // l'état affiché ; une seconde demande partie avant la réponse viserait d'autres pages.
   async pageOp(request, okMessage = null) {
     if (this.pageOpPending) {
-      toast('Modification des pages en cours : patientez un instant.', 'info');
+      toast('Modification en cours…', 'info');
       return null;
     }
     this.pageOpPending = true;
@@ -486,7 +487,7 @@ class App {
       return;
     }
     if (this.pageOpPending) {
-      toast('Modification des pages en cours : patientez un instant.', 'info');
+      toast('Modification en cours…', 'info');
       return;
     }
     const paths = await this.choosePdfs();
@@ -519,7 +520,7 @@ class App {
     const pdfs = files.filter(isPdfFile).sort(byName);
     const skipped = files.length - pdfs.length;
     if (!pdfs.length) toast(files.length > 1 ? 'Aucun de ces fichiers n\'est un PDF ou une image.' : 'Ce fichier n\'est ni un PDF ni une image.', 'error');
-    else if (skipped) toast(`${skipped} fichier${skipped > 1 ? 's' : ''} ignoré${skipped > 1 ? 's' : ''} : seuls les PDF et les images s'assemblent.`, 'info');
+    else if (skipped) toast(`${skipped} fichier${skipped > 1 ? 's' : ''} ignoré${skipped > 1 ? 's' : ''} : ni PDF ni image.`, 'info');
     const empty = pdfs.filter((f) => !f.size);
     if (empty.length) {
       toast(`« ${empty[0].name} » est vide.`, 'error');
@@ -528,7 +529,7 @@ class App {
     // Limite d'un envoi (serveur) : au-delà, la connexion serait coupée sans explication.
     const total = pdfs.reduce((sum, f) => sum + f.size, 0);
     if (total > MAX_UPLOAD) {
-      toast(`Fichiers trop volumineux (${formatSize(total)}) : 1 Go au plus en une fois. Ajoutez-les en plusieurs fois.`, 'error', { duration: 9000 });
+      toast(`Trop volumineux (${formatSize(total)}) : 1 Go au plus par ajout.`, 'error', { duration: 9000 });
       return [];
     }
     return pdfs;
@@ -538,7 +539,7 @@ class App {
   async addFiles(files, at) {
     if (!this.doc) return;
     if (this.pageOpPending) {
-      toast('Modification des pages en cours : patientez un instant.', 'info');
+      toast('Modification en cours…', 'info');
       return;
     }
     const pdfs = this.pdfsOnly(files);
@@ -573,7 +574,7 @@ class App {
   warnSigned(names) {
     if (!names?.length) return;
     const list = names.map((n) => `« ${n} »`).join(', ');
-    toast(`${list} ${names.length > 1 ? 'étaient signés' : 'était signé'} : la signature reste visible mais n'a plus de valeur électronique dans ce document. Signez-le une fois terminé.`, 'info', { duration: 10000 });
+    toast(`${list} : signature sans valeur dans ce document. Signez-le à la fin.`, 'info', { duration: 10000 });
   }
 
   // Nouveau document fait de plusieurs PDF (jamais enregistré à la place d'une source).
@@ -613,7 +614,7 @@ class App {
   async afterAssemble(data) {
     await this.onOpened(data.doc, { organize: true });
     const pages = data.doc.page_count;
-    toast(`${data.assembled} fichiers assemblés : ${pages} page${pages > 1 ? 's' : ''}. Glissez les pages pour changer leur ordre, puis enregistrez.`, 'ok', { duration: 7000 });
+    toast(`${data.assembled} fichiers assemblés : ${pages} page${pages > 1 ? 's' : ''}.`, 'ok', { duration: 5000 });
     this.warnSigned(data.signed_sources);
   }
 
@@ -623,13 +624,13 @@ class App {
     if (!this.doc) return;
     if (this.editor.isOpen) await this.editor.commit();
     if (this.doc.signed) {
-      toast('Ce document est signé : le compresser invaliderait ses signatures. Compressez-le avant de le signer.', 'error', { duration: 8000 });
+      toast('Document signé : la compression invaliderait ses signatures.', 'error', { duration: 8000 });
       return;
     }
     const levels = [
-      ['print', 'Qualité élevée', 'Pour l\'impression : images limitées à 300 ppp, très peu de perte.'],
-      ['screen', 'Équilibrée', 'Écran et courriel : images à 150 ppp. Recommandée.'],
-      ['minimum', 'Taille minimale', 'Plateformes limitées en taille : images à 100 ppp, qualité réduite.'],
+      ['print', 'Qualité élevée', 'Impression · 300 ppp'],
+      ['screen', 'Équilibrée', 'Écran, courriel · 150 ppp'],
+      ['minimum', 'Taille minimale', 'Envoi limité · 100 ppp'],
     ];
     let level = 'screen';
     const estimates = {};
@@ -637,7 +638,10 @@ class App {
     let closed = false;
     let before = null;
     let footer = null; // bouton « Enregistrer… » de la boîte
-    const current = el('p', { class: 'help compress-current', text: 'Taille actuelle : calcul…' });
+    // Cartouche : taille actuelle, pages, taille obtenue au niveau choisi.
+    const pages = this.doc.page_count;
+    const current = cartouche([['Actuel', '…'], ['Pages', String(pages)], ['Compressé', '…']], 'compress-current');
+    const [nowCell, , afterCell] = [...current.querySelectorAll('dd')];
     const list = el('div', { class: 'choice-list', role: 'radiogroup', 'aria-label': 'Niveau de compression' });
     const canSave = () => {
       const e = estimates[level];
@@ -645,9 +649,9 @@ class App {
     };
     const describe = (id) => {
       const e = estimates[id];
-      if (!e) return pending.has(id) ? 'Taille estimée : calcul…' : 'Choisissez ce niveau pour estimer la taille.';
+      if (!e) return pending.has(id) ? '…' : '';
       if (e.error) return e.error;
-      if (e.after >= e.before) return 'Aucun gain : ce PDF est déjà compact à ce niveau.';
+      if (e.after >= e.before) return 'Aucun gain';
       return `≈ ${formatSize(e.after)} (−${Math.round((1 - e.after / e.before) * 100)} %)`;
     };
     const paint = () => {
@@ -656,13 +660,15 @@ class App {
           el('span', { class: 'choice-radio' }),
           el('span', { class: 'choice-main' },
             el('span', { class: 'choice-name', text: title }),
-            el('span', { class: 'choice-meta', text: help }),
-            el('span', { class: `choice-size${!estimates[id] || estimates[id].error || estimates[id].after >= estimates[id].before ? ' none' : ''}`, text: describe(id) })));
+            el('span', { class: 'choice-meta', text: help })),
+          el('span', { class: `choice-size${!estimates[id] || estimates[id].error || estimates[id].after >= estimates[id].before ? ' none' : ''}`, text: describe(id) }));
         item.addEventListener('click', () => { level = id; paint(); estimate(id); });
         return item;
       }));
       if (footer) footer.disabled = !canSave();
-      if (before !== null) current.textContent = `Taille actuelle : ${formatSize(before)} — ${this.doc.page_count} page${this.doc.page_count > 1 ? 's' : ''}.`;
+      if (before !== null) nowCell.textContent = formatSize(before);
+      const chosen = estimates[level];
+      afterCell.textContent = !chosen ? '…' : chosen.error || chosen.after >= chosen.before ? '—' : formatSize(chosen.after);
     };
     const estimate = async (id) => {
       if (estimates[id] || pending.has(id)) return;
@@ -688,13 +694,15 @@ class App {
     };
     paint();
     estimate(level);
-    const body = el('div', { class: 'compress-dialog' }, current, list,
-      el('p', { class: 'help', text: 'Seules les images sont recompressées : texte, tracés, annotations et champs restent intacts. Le PDF compressé est enregistré dans un nouveau fichier ; l\'original reste inchangé.' }));
+    const body = el('div', { class: 'compress-dialog' }, current, list);
     const choice = await modal({
       title: 'Compresser le PDF',
       body,
       wide: true,
-      buttons: [{ label: 'Annuler', value: null }, { label: 'Enregistrer…', value: 'ok', kind: 'btn-primary', default: true, validate: canSave }],
+      buttons: [{ label: 'Annuler', value: null }, {
+        label: 'Enregistrer…', value: 'ok', kind: 'btn-primary', default: true, validate: canSave,
+        tip: 'Nouveau fichier : l\'original reste inchangé. Seules les images sont recompressées.',
+      }],
       onOpen: (dialog) => {
         // « Enregistrer… » attend l'estimation du niveau choisi et un gain réel.
         footer = dialog.querySelector('.modal-actions .btn-primary');
@@ -826,16 +834,15 @@ class App {
       el('option', { value: 'current', text: `Page affichée (${current + 1})` }),
       el('option', { value: 'all', text: total > 1 ? `Toutes les pages (${total} images)` : 'Toute la page' }));
     const quality = el('select', { class: 'text-input', 'aria-label': 'Résolution' },
-      el('option', { value: '150', text: 'Écran et courriel — 150 ppp' }),
-      el('option', { value: '300', text: 'Impression — 300 ppp' }));
+      el('option', { value: '150', text: 'Écran · 150 ppp' }),
+      el('option', { value: '300', text: 'Impression · 300 ppp' }));
     const body = el('div', {},
       el('label', { class: 'field-label', text: 'Pages' }), scope,
-      el('label', { class: 'field-label spaced', text: 'Résolution' }), quality,
-      el('p', { class: 'help', text: 'Une image JPG par page, numérotée d\'après le nom choisi. Annotations, champs remplis et signatures visibles figurent sur les images.' }));
+      el('label', { class: 'field-label spaced', text: 'Résolution' }), quality);
     const choice = await modal({
       title: 'Exporter en JPG',
       body,
-      buttons: [{ label: 'Annuler', value: null }, { label: 'Exporter', value: 'ok', kind: 'btn-primary', default: true }],
+      buttons: [{ label: 'Annuler', value: null }, { label: 'Exporter', value: 'ok', kind: 'btn-primary', default: true, tip: 'Une image par page, telle qu\'affichée' }],
     });
     if (choice !== 'ok') return;
     const payload = { scope: scope.value, page: current, dpi: Number(quality.value) };
@@ -851,7 +858,7 @@ class App {
       const data = await Api.post('api/export-jpeg', payload);
       if (data.cancelled) return;
       const count = data.files.length;
-      const done = count === 1 ? `Image enregistrée : ${data.files[0].split(/[\\/]/).pop()}` : `${count} images JPG enregistrées dans ${data.dir}`;
+      const done = count === 1 ? `Image enregistrée : ${data.files[0].split(/[\\/]/).pop()}` : `${count} images JPG enregistrées dans « ${String(data.dir || '').split(/[\\/]/).filter(Boolean).pop() || ''} »`;
       toast(data.reduced ? `${done}. Page très grande : résolution réduite.` : done, 'ok', { duration: 6000 });
     } catch (err) {
       toast(err.message, 'error');
@@ -952,15 +959,16 @@ class App {
     const printer = el('select', { class: 'text-input', 'aria-label': 'Imprimante' },
       list.printers.map((name) => el('option', { value: name, text: name === list.default ? `${name} (par défaut)` : name })));
     printer.value = list.selected || list.printers[0];
-    const preferences = el('button', { class: 'btn btn-ghost', type: 'button', text: 'Préférences de l\'imprimante…' });
-    const prefsNote = el('p', { class: 'help', text: 'Bac, couleur, qualité : préférences de l\'imprimante, comme dans Acrobat.' });
+    const preferences = el('button', { class: 'btn btn-ghost', type: 'button', text: 'Préférences…', 'data-tip': 'Réglages du pilote : bac, couleur, qualité' });
+    const prefsNote = el('p', { class: 'help', hidden: true });
     if (!this.state?.app?.dialogs) preferences.disabled = true;
     preferences.addEventListener('click', async () => {
       preferences.disabled = true;
       try {
         const data = await Api.post('api/print/preferences', { printer: printer.value });
         if (data.changed) {
-          prefsNote.textContent = `Préférences de « ${printer.value} » enregistrées pour cette impression et les suivantes.`;
+          prefsNote.replaceChildren(etat('ok', 'Préférences gardées', 'Jusqu\'à la fermeture de DestriPDF'));
+          prefsNote.hidden = false;
           loadCaps(); // papier et recto verso choisis dans le pilote
         }
       } catch (err) {
@@ -972,12 +980,12 @@ class App {
 
     const layout = el('select', { class: 'text-input', 'aria-label': 'Mise en page' },
       el('option', { value: 'normal', text: 'Pages normales' }),
-      el('option', { value: 'booklet', text: 'Livret — deux pages par face, pliées au milieu' }));
+      el('option', { value: 'booklet', text: 'Livret' }));
     const scope = el('select', { class: 'text-input', 'aria-label': 'Pages à imprimer' },
       el('option', { value: 'all', text: `Toutes (${total} page${total > 1 ? 's' : ''})` }),
       el('option', { value: 'current', text: `Page affichée (${current + 1})` }),
       el('option', { value: 'range', text: 'Pages choisies…' }));
-    const range = el('input', { class: 'text-input', type: 'text', placeholder: `Par exemple 1-3, 5 (sur ${total})`, 'aria-label': 'Pages choisies', hidden: true, autocomplete: 'off' });
+    const range = el('input', { class: 'text-input', type: 'text', placeholder: '1-3, 5', 'aria-label': 'Pages choisies', hidden: true, autocomplete: 'off' });
     const copies = el('input', { class: 'num-input', type: 'number', min: '1', max: '99', step: '1', value: '1', 'aria-label': 'Copies' });
     const pagesValue = () => (scope.value === 'range' ? range.value : scope.value);
 
@@ -985,7 +993,7 @@ class App {
     const sheet = el('select', { class: 'text-input', 'aria-label': 'Papier' });
     const duplex = el('select', { class: 'text-input', 'aria-label': 'Recto verso' });
     const binding = el('select', { class: 'text-input', 'aria-label': 'Reliure' },
-      el('option', { value: 'left', text: 'À gauche (lecture habituelle)' }),
+      el('option', { value: 'left', text: 'À gauche' }),
       el('option', { value: 'right', text: 'À droite' }));
     const duplexColumn = el('div', {}, el('label', { class: 'field-label spaced', text: 'Recto verso' }), duplex);
     const bindingColumn = el('div', { hidden: true }, el('label', { class: 'field-label spaced', text: 'Reliure' }), binding);
@@ -997,9 +1005,11 @@ class App {
       paperNote);
     const duplexLabels = {
       simplex: 'Recto seul',
-      long: 'Recto verso — bord long (comme un livre)',
-      short: 'Recto verso — bord court (comme un bloc-notes)',
+      long: 'Recto verso · bord long',
+      short: 'Recto verso · bord court',
     };
+    // État en un signe et deux mots ; le détail va dans l'infobulle.
+    const say = (node, kind, text, tip = null) => { node.replaceChildren(etat(kind, text, tip)); };
 
     // --- Livret ---
     const flip = el('input', { type: 'checkbox' });
@@ -1008,7 +1018,7 @@ class App {
     const preview = el('div', { class: 'booklet-preview', 'aria-label': 'Aperçu de la feuille 1' });
     const bookletBox = el('div', { class: 'print-booklet-box', hidden: true },
       duplexNote,
-      el('label', { class: 'check' }, flip, el('span', { text: 'Retourner les versos (s\'ils sont sortis tête en bas au premier essai)' })),
+      el('label', { class: 'check', 'data-tip': 'À cocher si les versos sortent tête en bas ; retenu pour cette imprimante' }, flip, el('span', { text: 'Retourner les versos' })),
       preview, plan);
     let caps = null;
     let capsFailed = false;
@@ -1028,7 +1038,7 @@ class App {
     const turned = (number) => doc.pages[number - 1].w > doc.pages[number - 1].h;
     const faceFigure = (face, caption) => el('figure', { class: 'booklet-face' },
       el('div', { class: 'booklet-sheet' }, face.map((number) => el('div', { class: `booklet-slot${number ? '' : ' blank'}${number && turned(number) ? ' turned' : ''}` },
-        number ? pageImage(number) : el('span', { text: 'blanche' }),
+        number ? pageImage(number) : null,
         number ? el('span', { class: 'booklet-number', text: String(number) }) : null))),
       el('figcaption', { text: caption }));
     let planSeq = 0;
@@ -1039,15 +1049,15 @@ class App {
         const query = `pages=${encodeURIComponent(pagesValue())}&current=${current}&binding=${binding.value}`;
         const data = await Api.get(`api/print/booklet-plan?${query}`);
         if (seq !== planSeq) return;
-        preview.replaceChildren(faceFigure(data.faces[0], 'Feuille 1 — recto'), faceFigure(data.faces[1], 'Feuille 1 — verso'));
+        preview.replaceChildren(faceFigure(data.faces[0], 'Feuille 1 · recto'), faceFigure(data.faces[1], 'Feuille 1 · verso'));
         const blanks = data.sheets * 4 - data.pages;
         const describe = (face) => face.map((n) => n || '–').join(' | ');
         const lines = [];
         for (let s = 0; s < Math.min(data.sheets, 6); s += 1) lines.push(`feuille ${s + 1} : ${describe(data.faces[2 * s])} / ${describe(data.faces[2 * s + 1])}`);
         if (data.sheets > 6) lines.push('…');
         plan.textContent = `${data.sheets} feuille${data.sheets > 1 ? 's' : ''} ${(sheet.value || 'a4').toUpperCase()} pour ${data.pages} page${data.pages > 1 ? 's' : ''}`
-          + `${blanks ? `, ${blanks} page${blanks > 1 ? 's' : ''} blanche${blanks > 1 ? 's' : ''} à la fin` : ''}. Pliez la pile au milieu, feuille 1 à l'extérieur. `
-          + `Ordre (recto / verso) — ${lines.join(' · ')}`;
+          + `${blanks ? `, ${blanks} blanche${blanks > 1 ? 's' : ''}` : ''} — ${lines.join(' · ')}`;
+        plan.dataset.tip = 'Recto / verso de chaque feuille. Pliez la pile au milieu, feuille 1 à l\'extérieur.';
       } catch (err) {
         if (seq !== planSeq) return;
         preview.replaceChildren();
@@ -1059,7 +1069,7 @@ class App {
       const seq = ++capsSeq;
       caps = null;
       capsFailed = false;
-      duplexNote.textContent = 'Lecture des capacités de l\'imprimante…';
+      say(duplexNote, '', 'Lecture…');
       paperNote.hidden = true;
       try {
         const data = await Api.get(`api/printers/capabilities?printer=${encodeURIComponent(printer.value)}`);
@@ -1078,13 +1088,13 @@ class App {
         duplex.replaceChildren(...modes.map((mode) => el('option', { value: mode, text: duplexLabels[mode] || mode })));
         duplex.value = modes.includes(now.duplex) ? now.duplex : 'simplex';
         duplex.disabled = modes.length < 2;
-        paperNote.textContent = modes.length < 2 ? 'Cette imprimante n\'imprime pas en recto verso.' : '';
+        if (modes.length < 2) say(paperNote, 'warn', 'Pas de recto verso', 'Cette imprimante n\'imprime pas en recto verso');
+        else paperNote.replaceChildren();
         paperNote.hidden = layout.value === 'booklet' || !paperNote.textContent;
         flip.checked = Boolean(data.flip_backs);
-        if (!data.sheets.length) duplexNote.textContent = 'Cette imprimante ne propose ni A4 ni A3 : livret impossible.';
-        else duplexNote.textContent = data.duplex
-          ? 'Recto verso automatique, envoyé comme un document Word (A4 portrait, bord long) : DestriPDF tourne lui-même les faces et les versos.'
-          : 'Cette imprimante n\'imprime pas en recto verso : les faces sortent l\'une après l\'autre (recto, verso, recto…).';
+        if (!data.sheets.length) say(duplexNote, 'bad', 'Livret impossible', 'Cette imprimante ne propose ni A4 ni A3');
+        else if (data.duplex) say(duplexNote, 'ok', 'Recto verso automatique', 'Envoyé comme un document Word : portrait, bord long, faces tournées par DestriPDF');
+        else say(duplexNote, 'warn', 'Pas de recto verso', 'Les faces sortent l\'une après l\'autre : recto, verso, recto…');
       } catch (err) {
         if (seq !== capsSeq) return;
         capsFailed = true;
@@ -1143,11 +1153,11 @@ class App {
         validate: () => {
           if (layout.value !== 'booklet') {
             if (caps || capsFailed) return true;
-            toast('Capacités de l\'imprimante en cours de lecture : réessayez dans un instant.', 'error');
+            toast('Lecture de l\'imprimante en cours…', 'error');
             return false;
           }
           if (!caps) {
-            toast('Capacités de l\'imprimante en cours de lecture : réessayez dans un instant.', 'error');
+            toast('Lecture de l\'imprimante en cours…', 'error');
             return false;
           }
           if (!caps.sheets.length) {
@@ -1164,12 +1174,12 @@ class App {
     const payload = { printer: printer.value, pages: pagesValue(), current, copies: Number(copies.value), layout: layout.value };
     if (layout.value === 'booklet') Object.assign(payload, { sheet: sheet.value, binding: binding.value, flip_backs: flip.checked });
     else Object.assign(payload, { sheet: sheet.value || undefined, duplex: duplex.value || undefined });
-    const indicator = busy(layout.value === 'booklet' ? 'Mise en page du livret et envoi à l\'imprimante…' : 'Envoi à l\'imprimante…');
+    const indicator = busy('Envoi à l\'imprimante…');
     try {
       const data = await Api.post('api/print', payload);
       const copiesText = data.copies > 1 ? `, ${data.copies} exemplaires` : '';
       if (data.layout === 'booklet') {
-        toast(`Livret envoyé à « ${printer.value} » : ${data.sheets} feuille${data.sheets > 1 ? 's' : ''} ${data.sheet.toUpperCase()} recto verso${copiesText}. Pliez la pile au milieu.`, 'ok', { duration: 9000 });
+        toast(`Livret envoyé à « ${printer.value} » : ${data.sheets} feuille${data.sheets > 1 ? 's' : ''} ${data.sheet.toUpperCase()} recto verso${copiesText}.`, 'ok', { duration: 7000 });
       } else {
         const count = `${data.pages} page${data.pages > 1 ? 's' : ''}`;
         const sides = { simplex: 'recto seul', long: 'recto verso', short: 'recto verso bord court' }[data.duplex];
@@ -1238,7 +1248,7 @@ class App {
     }
     if (payload.visible === 'missing') {
       this.tools.set('sign');
-      toast('Tracez le cadre de la signature sur la page, ou décochez « Signature visible ».', 'error');
+      toast('Tracez le cadre de la signature sur la page.', 'error');
       return;
     }
     if (this.editor.isOpen) await this.editor.commit();
@@ -1250,8 +1260,8 @@ class App {
       body.path = path;
     }
     const indicator = busy(this.settings?.sign_ltv !== false
-      ? 'Vérification du certificat auprès de votre autorité, puis signature. Si la fenêtre de votre clé le demande, saisissez votre code PIN.'
-      : 'Signature en cours. Si la fenêtre de votre clé le demande, saisissez votre code PIN.');
+      ? 'Vérification du certificat, puis signature… Code PIN dans la fenêtre de la clé.'
+      : 'Signature… Code PIN dans la fenêtre de la clé.');
     try {
       const data = await Api.post('api/sign', body);
       if (data.cancelled) return;
@@ -1259,9 +1269,9 @@ class App {
       await this.onOpened(data.doc);
       this.panel.open('signatures');
       const sig = data.signature || {};
-      if (sig.ltv_note) toast(`Document signé et enregistré : ${data.doc.name}. ${sig.ltv_note}`, 'info', { duration: 12000 });
-      else if (sig.ltv) toast(`Document signé et enregistré : ${data.doc.name}. État de révocation du certificat intégré (LTV).`, 'ok', { duration: 7000 });
-      else toast(`Document signé et enregistré : ${data.doc.name}`, 'ok', { duration: 6000 });
+      if (sig.ltv_note) toast(`Signé : ${data.doc.name}. ${sig.ltv_note}`, 'info', { duration: 12000 });
+      else if (sig.ltv) toast(`Signé : ${data.doc.name} (LTV).`, 'ok', { duration: 6000 });
+      else toast(`Signé : ${data.doc.name}`, 'ok', { duration: 6000 });
     } catch (err) {
       toast(err.message, 'error');
     } finally {
@@ -1275,24 +1285,23 @@ class App {
     banner.className = 'sig-banner';
     if (reports === null || !this.doc?.signed) {
       banner.hidden = !this.doc?.signed;
-      if (this.doc?.signed) banner.append(iconEl('shield'), el('span', { text: 'Vérification des signatures…' }));
+      if (this.doc?.signed) banner.append(iconEl('shield'), etat('', 'Vérification…'));
       return;
     }
     banner.hidden = false;
     if (error || !reports.length) {
       banner.classList.add('warning');
-      banner.append(iconEl('shieldWarn'), el('span', { text: error || 'Signatures illisibles.' }));
+      banner.append(iconEl('shieldWarn'), etat('warn', 'Signatures illisibles', error));
       return;
     }
     const worst = reports.some((r) => r.status === 'invalid') ? 'invalid' : reports.some((r) => r.status === 'warning') ? 'warning' : 'valid';
     banner.classList.add(worst);
     const names = [...new Set(reports.map((r) => r.signer).filter(Boolean))].join(', ');
-    const text = worst === 'valid'
-      ? `Signé par ${names} — signature${reports.length > 1 ? 's' : ''} valide${reports.length > 1 ? 's' : ''}.`
-      : worst === 'warning'
-        ? `Signé par ${names} — à vérifier : ${reports.find((r) => r.status === 'warning').summary.replace(/^Signature intègre, à vérifier : /, '')}`
-        : `Signature invalide : ${reports.find((r) => r.status === 'invalid').summary}`;
-    banner.append(iconEl(worst === 'valid' ? 'shield' : worst === 'warning' ? 'shieldWarn' : 'shieldBad'), el('span', { text }));
+    // Le nom, puis l'état en un signe et deux mots ; le motif va dans l'infobulle et le panneau.
+    const cause = worst === 'valid' ? null : reports.find((r) => r.status === worst).summary;
+    banner.append(iconEl(worst === 'valid' ? 'shield' : worst === 'warning' ? 'shieldWarn' : 'shieldBad'),
+      el('span', { class: 'sig-banner-text', text: `Signé par ${names}` }),
+      worst === 'valid' ? etat('ok', 'Valide') : worst === 'warning' ? etat('warn', 'À vérifier', cause) : etat('bad', 'Invalide', cause));
     const details = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: 'Détails' });
     details.addEventListener('click', () => this.panel.open('signatures'));
     banner.append(details);
@@ -1308,7 +1317,7 @@ class App {
   }
 
   async drawSignature() {
-    const canvas = el('canvas', { class: 'sig-pad', width: '1040', height: '380', tabindex: '0', 'aria-label': 'Zone de dessin de la signature' });
+    const canvas = el('canvas', { class: 'sig-pad', width: '1040', height: '380', tabindex: '0', 'aria-label': 'Zone de dessin de la signature', 'data-tip': 'Souris, stylet ou doigt ; image gardée sur ce poste' });
     const ctx = canvas.getContext('2d');
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -1339,8 +1348,7 @@ class App {
     canvas.addEventListener('pointerup', () => { drawing = false; });
     const clear = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: 'Effacer' });
     clear.addEventListener('click', () => { ctx.clearRect(0, 0, canvas.width, canvas.height); empty = true; });
-    const body = el('div', {}, canvas, el('div', { class: 'modal-actions' }, clear),
-      el('p', { class: 'help', text: 'Signez avec la souris, un stylet ou le doigt. L\'image est conservée sur ce poste pour vos prochaines signatures.' }));
+    const body = el('div', {}, canvas, el('div', { class: 'panel-actions' }, clear));
     const result = await modal({
       title: 'Dessiner ma signature',
       body,
@@ -1400,8 +1408,8 @@ class App {
       { label: 'Fermer le document', icon: 'close', disabled: !doc, action: () => this.closeDocument() },
       '-',
       { label: 'Organiser les pages', icon: 'grid', disabled: !doc, action: () => this.organizer.open() },
-      { label: 'Ajouter des fichiers après cette page…', icon: 'addFiles', disabled: !doc, action: () => this.addPdfs(current + 1) },
-      { label: 'Assembler des fichiers (nouveau document)…', icon: 'merge', action: () => this.assemble() },
+      { label: 'Ajouter des fichiers ici…', icon: 'addFiles', disabled: !doc, action: () => this.addPdfs(current + 1) },
+      { label: 'Assembler des fichiers…', icon: 'merge', action: () => this.assemble() },
       { label: 'Pivoter la page à droite', icon: 'rotate', disabled: !doc, action: () => this.rotatePages([current], 90) },
       { label: 'Pivoter la page à gauche', icon: 'rotateLeft', disabled: !doc, action: () => this.rotatePages([current], -90) },
       { label: 'Supprimer la page', icon: 'trash', disabled: !doc, action: () => this.deletePages([current]) },
@@ -1436,7 +1444,7 @@ class App {
     const theme = el('select', { class: 'text-input' },
       el('option', { value: 'auto', text: 'Comme Windows' }), el('option', { value: 'light', text: 'Clair' }), el('option', { value: 'dark', text: 'Sombre' }));
     theme.value = s.theme || 'auto';
-    const tsa = el('input', { class: 'text-input', value: s.timestamp_url || '', placeholder: 'Facultatif — ex. adresse d\'horodatage de votre autorité', autocomplete: 'off' });
+    const tsa = el('input', { class: 'text-input', value: s.timestamp_url || '', placeholder: 'Facultatif', autocomplete: 'off', 'data-tip': 'Adresse du service d\'horodatage de votre autorité ; vide : pas d\'horodatage' });
     const ltv = el('input', { type: 'checkbox' });
     ltv.checked = s.sign_ltv !== false;
     const imageControls = el('div', { class: 'sig-preview' });
@@ -1455,19 +1463,18 @@ class App {
       } else {
         const draw = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: 'Dessiner' });
         draw.addEventListener('click', async () => { if (await this.drawSignature()) renderImage(); });
-        imageControls.append(el('span', { class: 'help', text: 'Aucune image.' }), draw);
+        imageControls.append(etat('', 'Aucune image'), draw);
       }
     };
     renderImage();
     const body = el('div', {},
       el('label', { class: 'field-label', text: 'Auteur des annotations' }), author,
-      el('label', { class: 'field-label spaced', text: 'Apparence' }), theme,
-      el('label', { class: 'field-label spaced', text: 'Validation à long terme (LTV)' }),
-      el('label', { class: 'check' }, ltv, el('span', { text: 'Intégrer l\'état de révocation du certificat à chaque signature' })),
-      el('p', { class: 'help', text: "Comme Acrobat : au moment de signer, l'état de votre certificat est demandé à votre autorité de certification puis intégré au document, qui reste vérifiable même après l'expiration du certificat (connexion Internet nécessaire)." }),
-      el('label', { class: 'field-label spaced', text: 'Horodatage des signatures (TSA)' }), tsa,
-      el('p', { class: 'help', text: "Laissez vide pour signer sans horodatage. Avec une adresse, chaque signature est horodatée par ce service (connexion Internet nécessaire)." }),
-      el('label', { class: 'field-label spaced', text: 'Image de signature manuscrite' }), imageControls);
+      el('label', { class: 'field-label spaced', text: 'Thème' }), theme,
+      el('label', { class: 'field-label spaced', text: 'Signature' }),
+      el('label', { class: 'check', 'data-tip': 'L\'état de révocation du certificat est demandé à votre autorité puis intégré au document, qui reste vérifiable après l\'expiration du certificat (Internet au moment de signer)' },
+        ltv, el('span', { text: 'Validation à long terme (LTV)' })),
+      el('label', { class: 'field-label spaced', text: 'Horodatage (TSA)' }), tsa,
+      el('label', { class: 'field-label spaced', text: 'Signature manuscrite' }), imageControls);
     const result = await modal({
       title: 'Réglages',
       body,
@@ -1489,7 +1496,9 @@ class App {
     const app = this.state?.app || {};
     modal({
       title: 'DestriPDF',
-      text: `Version ${app.version || ''}\nLecture, modification, annotation et signature électronique de documents PDF.\nSignature PAdES avec le certificat de votre clé, via le magasin de certificats Windows.\nMoteur PDF : MuPDF (PyMuPDF). Signature : pyHanko.`,
+      body: el('div', {},
+        cartouche([['Version', app.version || '—'], ['Moteur', 'MuPDF'], ['Signature', 'PAdES']]),
+        el('p', { class: 'about-mark', text: 'Menuiserie Destribois' })),
       buttons: [{ label: 'Fermer', value: null, kind: 'btn-primary', default: true }],
     });
   }
@@ -1614,19 +1623,10 @@ class App {
     }
     const count = [...(e.dataTransfer?.items || [])].filter((item) => item.kind === 'file').length || 1;
     let title;
-    let hint = '';
-    if (!this.doc) {
-      title = count > 1 ? `Déposez les ${count} fichiers pour les assembler` : 'Déposez le fichier pour l\'ouvrir';
-    } else if (count > 1 || this.organizer.isOpen) {
-      title = count > 1 ? `Déposez pour ajouter ces ${count} fichiers à la fin du document` : 'Déposez pour ajouter ce fichier à la fin du document';
-      hint = 'Pour les placer ailleurs, déposez-les entre deux pages.';
-    } else {
-      title = 'Déposez le fichier pour l\'ouvrir';
-      hint = 'Pour l\'ajouter à ce document, déposez-le entre deux vignettes ou dans « Organiser ».';
-    }
+    if (!this.doc) title = count > 1 ? `Assembler ${count} fichiers` : 'Ouvrir le fichier';
+    else if (count > 1 || this.organizer.isOpen) title = count > 1 ? `Ajouter ${count} fichiers à la fin` : 'Ajouter à la fin';
+    else title = 'Ouvrir le fichier';
     $('drop-title').textContent = title;
-    $('drop-hint').textContent = hint;
-    $('drop-hint').hidden = !hint;
     overlay.hidden = false;
   }
 
