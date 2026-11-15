@@ -856,6 +856,20 @@ destricenter pour les applications : DestriPDF, DestriNote, Destriview », mené
 - [x] Vraie fenêtre WebView2 lancée depuis les sources (réglages isolés, PFX de
   test) : document ouvert et accueil capturés (`charte\f-fenetre-*.png`).
 
+### Publication — 15 novembre
+
+- [x] Commit `f2eaef6` ; `scripts\release.ps1 -Publish` : `build.ps1` complet —
+  156 tests, exécutable, fumée de l'exécutable figé 30/30 (polices de la charte
+  comprises), installateur `DestriPDF-1.7.0-installation.exe` (36 672 118
+  octets), SHA-256
+  `D83F70F898F0795E6763B94B9BC7DC3240A253DB7744514486971BC62DA3AFA6`.
+- [x] `main` et l'étiquette `v1.7.0` poussées ; release publiée :
+  https://github.com/florentdestribois/DestriPDF/releases/tag/v1.7.0,
+  installateur joint, taille et SHA-256 identiques sur GitHub.
+- [x] Exécutable figé de la release lancé en vraie fenêtre (réglages isolés, PFX
+  de test) : fenêtre en 0,8 s, icône et interface à la nouvelle charte
+  (`charte\f-executable-fige.png`).
+
 ### Reste à faire / limites
 
 - [x] Mouvements : ce poste réduit les animations de Windows, l'application les
