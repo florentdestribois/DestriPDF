@@ -413,29 +413,17 @@ export class Panel {
 
     // Signature manuscrite seule
     const simple = el('div', { class: 'panel-section' }, cote('Image seule'));
-    const stamp = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', 'data-tip': 'Pose l\'image de votre signature sur la page' }, iconEl('image'), el('span', { text: 'Apposer l\'image' }));
-    stamp.addEventListener('click', () => this.app.placeHandwritten());
-    simple.append(el('div', { class: 'panel-actions' }, stamp, etat('warn', 'Sans valeur électronique')));
+    const stamp = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', 'data-tip': 'Pose l\'image de votre signature sur la page' }, iconEl('pen'), el('span', { text: 'Signature' }));
+    stamp.addEventListener('click', () => this.app.placeImage('signature'));
+    const tampon = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', 'data-tip': 'Pose votre tampon sur la page' }, iconEl('stamp'), el('span', { text: 'Tampon' }));
+    tampon.addEventListener('click', () => this.app.placeImage('tampon'));
+    simple.append(el('div', { class: 'panel-actions' }, stamp, tampon, etat('warn', 'Sans valeur électronique')));
     body.append(simple);
     body.scrollTop = keepScroll;
   }
 
   signatureImageControls() {
-    const wrap = el('div', { class: 'sig-preview' });
-    const has = this.app.settings?.has_signature_image;
-    if (has) {
-      const img = el('img', { alt: 'Image de signature enregistrée' });
-      img.src = `api/signature-image?t=${Date.now()}`;
-      wrap.append(img);
-    } else {
-      wrap.append(etat('', 'Aucune image'));
-    }
-    const draw = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: has ? 'Refaire' : 'Dessiner' });
-    draw.addEventListener('click', async () => { if (await this.app.drawSignature()) this.renderSign(); });
-    const load = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: 'Importer' });
-    load.addEventListener('click', async () => { if (await this.app.importSignature()) this.renderSign(); });
-    wrap.append(draw, load);
-    return wrap;
+    return this.app.imageControls('signature', () => this.renderSign());
   }
 
   signPayload() {
@@ -444,7 +432,7 @@ export class Panel {
     return {
       certificate: this.certId,
       visible: draft.visible ? (frame ? { page: frame.page, rect: frame.rect } : 'missing') : null,
-      with_image: draft.visible && draft.withImage && Boolean(this.app.settings?.has_signature_image),
+      with_image: draft.visible && draft.withImage && this.app.hasImage('signature'),
       reason: draft.reason.trim(),
       location: draft.location.trim(),
     };

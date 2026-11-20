@@ -347,6 +347,10 @@ try:
         edge.click_on("#btn-more")
         edge.wait_for("document.querySelector('.menu')")
         edge.js("[...document.querySelectorAll('.menu-item')].find(b => b.textContent.includes('signature manuscrite')).click()")
+        # Première utilisation : la signature s'enregistre d'abord (dessin ou image).
+        edge.wait_for("document.querySelector('.modal') && document.querySelector('.modal').textContent.includes('Ma signature')")
+        edge.shot(OUT / "11a-premiere-signature.png")
+        edge.js("[...document.querySelectorAll('.modal button')].find(b => b.textContent.trim() === 'Dessiner').click()")
         edge.wait_for("document.querySelector('.sig-pad')")
         x0, y0 = edge.js("(() => { const r = document.querySelector('.sig-pad').getBoundingClientRect(); return [r.left, r.top]; })()")
         edge.drag([(x0 + 40, y0 + 120), (x0 + 120, y0 + 60), (x0 + 200, y0 + 130), (x0 + 300, y0 + 70), (x0 + 380, y0 + 110)], steps=8)
@@ -360,7 +364,51 @@ try:
         v = version()
         edge.click(x, y)
         wait_doc_version(v)
-        assert any(a["type"] == "Stamp" for a in annots(1))
+        assert any(a["type"] == "Stamp" and a["content"] == "Signature manuscrite" for a in annots(1))
+
+    @step("Tampon : première utilisation, image JPEG importée, apposé depuis la barre d'outils")
+    def _():
+        edge.click_on(".toolbar .tool[data-tool='tampon']")
+        edge.wait_for("document.querySelector('.modal') && document.querySelector('.modal').textContent.includes('Mon tampon')")
+        assert not edge.js("[...document.querySelectorAll('.modal button')].some(b => b.textContent.trim() === 'Dessiner')")
+        edge.js("[...document.querySelectorAll('.modal button')].find(b => b.textContent.trim() === 'Annuler').click()")
+        time.sleep(0.4)
+        assert not edge.js("document.body.classList.contains('mode-tampon')")
+        # Le sélecteur de fichiers de Windows n'existe pas sans fenêtre : image envoyée comme par « Importer ».
+        edge.js("""(async () => {
+          const c = document.createElement('canvas'); c.width = 240; c.height = 240;
+          const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, 240, 240);
+          g.strokeStyle = '#1f5fa8'; g.lineWidth = 14; g.beginPath(); g.arc(120, 120, 96, 0, 7); g.stroke();
+          g.fillStyle = '#1f5fa8'; g.font = 'bold 40px sans-serif'; g.textAlign = 'center'; g.fillText('BON', 120, 135);
+          const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.9));
+          window.__tamponOk = await window.__app.uploadImage('tampon', blob);
+        })()""")
+        edge.wait_for("window.__tamponOk === true", timeout=10)
+        assert edge.js("JSON.stringify(window.__app.settings.images.tampon)") == "[240,240]"
+        edge.click_on(".toolbar .tool[data-tool='tampon']")
+        edge.wait_for("document.body.classList.contains('mode-tampon')", timeout=8)
+        x, y = page_point(400, 300, page=1)
+        v = version()
+        edge.click(x, y)
+        wait_doc_version(v)
+        stamp = next(a for a in annots(1) if a["type"] == "Stamp" and a["content"] == "Tampon")
+        x0, y0, x1, y1 = stamp["rect"]
+        assert abs((x1 - x0) - (y1 - y0)) < 1.5, stamp["rect"]  # carré : proportions gardées
+        time.sleep(0.6)
+        edge.shot(OUT / "11b-tampon-appose.png")
+
+    @step("Réglages : signature et tampon modifiables")
+    def _():
+        edge.js("void window.__app.openSettings()")
+        edge.wait_for("document.querySelectorAll('.modal .sig-preview img').length === 2")
+        edge.wait_for("[...document.querySelectorAll('.modal .sig-preview img')].every(i => i.complete && i.naturalWidth > 0)")
+        labels = edge.js("[...document.querySelectorAll('.modal .sig-preview')].map(w => [...w.querySelectorAll('button')].map(b => b.textContent.trim()).join('|'))")
+        assert labels == ["Refaire|Remplacer|Supprimer", "Remplacer|Supprimer"], labels
+        edge.js("document.querySelector('.modal .modal-scroll, .modal-body')?.scrollTo(0, 9999)")
+        time.sleep(0.4)
+        edge.shot(OUT / "11c-reglages-images.png")
+        edge.js("[...document.querySelectorAll('.modal button')].find(b => b.textContent.trim() === 'Annuler').click()")
+        time.sleep(0.4)
 
     @step("Enregistrer sous")
     def _():

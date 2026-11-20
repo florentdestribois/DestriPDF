@@ -10,9 +10,11 @@ from pathlib import Path
 
 APP_DIR = Path(os.environ.get("APPDATA") or Path.home()) / "DestriPDF"
 LOCAL_DIR = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "DestriPDF"
-SIGNATURE_IMAGE = "signature.png"
+# Images de l'utilisateur, une par emplacement (déjà converties en PNG par le serveur).
+USER_IMAGES = {"signature": "signature.png", "tampon": "tampon.png"}
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 MAX_RECENT = 12
-MAX_SIGNATURE_IMAGE = 2 * 1024 * 1024
+MAX_USER_IMAGE = 2 * 1024 * 1024
 
 DEFAULTS = {
     "author": "",
@@ -20,6 +22,7 @@ DEFAULTS = {
     "sign_location": "",
     "sign_visible": True,
     "sign_with_image": True,
+    "image_white_transparent": True,  # fond blanc des images importées rendu transparent
     "sign_ltv": True,
     "timestamp_url": "",
     "last_dir": "",
@@ -29,7 +32,7 @@ DEFAULTS = {
     "recent": [],
 }
 
-EDITABLE = {"author", "sign_reason", "sign_location", "sign_visible", "sign_with_image", "sign_ltv", "timestamp_url", "theme"}
+EDITABLE = {"author", "sign_reason", "sign_location", "sign_visible", "sign_with_image", "sign_ltv", "timestamp_url", "theme", "image_white_transparent"}
 
 
 class Settings:
@@ -69,8 +72,11 @@ class Settings:
     def public(self) -> dict:
         with self._lock:
             data = {k: self._data[k] for k in EDITABLE}
-            data["has_signature_image"] = self.signature_image_path.exists()
-            return data
+            images = {slot: self._image_size(slot) for slot in USER_IMAGES}
+        data["images"] = images
+        data["has_signature_image"] = images["signature"] is not None
+        data["has_tampon_image"] = images["tampon"] is not None
+        return data
 
     def update(self, changes: dict) -> dict:
         with self._lock:
@@ -131,26 +137,42 @@ class Settings:
         with self._lock:
             return any(r.get("path", "").lower() == str(Path(path)).lower() for r in self._data.get("recent", []))
 
-    @property
-    def signature_image_path(self) -> Path:
-        return self.dir / SIGNATURE_IMAGE
+    def image_path(self, slot: str) -> Path:
+        if slot not in USER_IMAGES:
+            raise ValueError("Emplacement d'image inconnu.")
+        return self.dir / USER_IMAGES[slot]
 
-    def signature_image(self) -> bytes | None:
+    def _image_size(self, slot: str) -> list[int] | None:
+        """Largeur et hauteur lues dans l'en-tête PNG, sinon None (pas d'image)."""
         try:
-            return self.signature_image_path.read_bytes()
+            with open(self.image_path(slot), "rb") as fh:
+                head = fh.read(24)
+        except OSError:
+            return None
+        if not head.startswith(PNG_MAGIC) or head[12:16] != b"IHDR":
+            return None
+        return [int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")]
+
+    def user_image(self, slot: str) -> bytes | None:
+        try:
+            return self.image_path(slot).read_bytes()
         except OSError:
             return None
 
-    def set_signature_image(self, data: bytes) -> None:
-        if not data.startswith(b"\x89PNG\r\n\x1a\n") or len(data) > MAX_SIGNATURE_IMAGE:
-            raise ValueError("Image de signature invalide (PNG de 2 Mo au plus).")
+    def set_user_image(self, slot: str, png: bytes) -> None:
+        if not png.startswith(PNG_MAGIC) or len(png) > MAX_USER_IMAGE:
+            raise ValueError("Image invalide.")
+        path = self.image_path(slot)
         self.dir.mkdir(parents=True, exist_ok=True)
-        tmp = self.signature_image_path.with_suffix(".tmp")
-        tmp.write_bytes(data)
-        os.replace(tmp, self.signature_image_path)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_bytes(png)
+        os.replace(tmp, path)
 
-    def delete_signature_image(self) -> None:
+    def delete_user_image(self, slot: str) -> None:
         try:
-            self.signature_image_path.unlink()
+            self.image_path(slot).unlink()
         except FileNotFoundError:
             pass
+
+    def signature_image(self) -> bytes | None:
+        return self.user_image("signature")

@@ -16,7 +16,7 @@ marchés publics).
 
 ## Installation
 
-1. Lancer `installer_output\DestriPDF-1.7.0-installation.exe` (ou l'installateur
+1. Lancer `installer_output\DestriPDF-1.8.0-installation.exe` (ou l'installateur
    joint à la release GitHub de la version) et accepter la
    demande d'autorisation de Windows. DestriPDF s'installe pour tous les
    utilisateurs du poste dans `C:\Program Files\DestriPDF` (« Programmes » dans
@@ -242,14 +242,27 @@ panneau « Signatures », qui indique aussi si l'état de révocation est intég
 (LTV, dans le document ou, pour Acrobat, dans la signature elle-même) et si
 l'heure est attestée par une autorité d'horodatage reconnue par Windows.
 
-« Apposer ma signature manuscrite » (menu ⋯) pose seulement l'image de la
-signature : elle n'a pas valeur de signature électronique.
+### Signature manuscrite et tampon (images)
+
+Deux images distinctes, conservées sur ce poste : la signature manuscrite et le
+tampon de l'entreprise. Boutons « Signature » et « Tampon » de la barre d'outils
+(aussi menu ⋯ et panneau « Signer ») : cliquer sur la page pour poser l'image à
+sa taille habituelle, ou tracer un cadre ; l'image garde toujours ses
+proportions. À la première utilisation, DestriPDF demande l'image : dessinée
+(signature seulement) ou importée (PNG, JPG, TIFF, BMP, GIF, WebP, JPEG 2000 ;
+convertie en PNG, orientation de l'appareil photo appliquée, réduite à
+1600 pixels). Le fond blanc d'une image sans transparence (scan, photo) devient
+transparent pour laisser voir le document (réglage « Fond blanc transparent »).
+L'image posée est une annotation « Tampon » qui se déplace, se supprime et
+s'annule comme les autres ; elle n'a pas valeur de signature électronique.
 
 ### Réglages
 
 Menu ⋯ › Réglages : auteur des annotations, thème (Windows, clair, sombre),
 validation à long terme des signatures (état de révocation intégré, actif par
-défaut), adresse d'un service d'horodatage (TSA) facultatif, image de signature.
+défaut), adresse d'un service d'horodatage (TSA) facultatif, signature manuscrite
+(dessiner, importer, remplacer, supprimer), tampon (importer, remplacer,
+supprimer), fond blanc transparent des images importées.
 
 ## Dépannage
 

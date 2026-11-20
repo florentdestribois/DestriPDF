@@ -222,6 +222,26 @@ def test_signature_image_upright_on_rotated_page():
     assert pix.width > 0
 
 
+def test_tampon_keeps_proportions_and_stays_upright_on_rotated_page():
+    """Un tampon carré posé dans un cadre large garde ses proportions (cadre
+    réduit et centré, jamais déformé) et s'affiche droit sur une page pivotée."""
+    img = fitz.open()
+    p = img.new_page(width=100, height=100)
+    p.draw_rect(fitz.Rect(0, 0, 100, 20), color=(1, 0, 0), fill=(1, 0, 0))
+    png, w, h = d.user_image_png(p.get_pixmap(alpha=False).tobytes("png"), transparent_white=True)
+    assert (w, h) == (100, 100)
+    s = d.PdfSession(samples.rotated_pdf(), name="plan.pdf")
+    s.add_annotation(0, {"type": "stamp_image", "slot": "tampon", "rect": [100, 100, 400, 160], "image": png})
+    stamp = next(a for a in s.annotations(0) if a["type"] == "Stamp")
+    x0, y0, x1, y1 = stamp["rect"]
+    assert abs((x1 - x0) - (y1 - y0)) < 1 and abs((x0 + x1) / 2 - 250) < 1
+    assert stamp["content"] == "Tampon"
+    full = s.doc[0].get_pixmap()
+    red = lambda c: c[0] > 200 and c[1] < 80 and c[2] < 80  # noqa: E731
+    assert red(full.pixel(int((x0 + x1) / 2), int(y0 + 4)))  # bandeau rouge en haut
+    assert not red(full.pixel(int((x0 + x1) / 2), int(y1 - 4)))
+
+
 def test_annotations_land_where_drawn_on_rotated_page():
     s = d.PdfSession(samples.rotated_pdf(), name="plan.pdf")
     shown = {

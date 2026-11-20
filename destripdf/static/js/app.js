@@ -87,6 +87,15 @@ class App {
       button.addEventListener('click', () => this.tools.set(this.tools.tool === tool.id && tool.id !== 'select' ? 'select' : tool.id));
       host.append(button);
     }
+    // Images à apposer : signature manuscrite et tampon, enregistrées à la première utilisation.
+    host.append(el('div', { class: 'toolbar-sep' }));
+    for (const [slot, mode, icon, short, label] of [['signature', 'stamp', 'pen', 'Signature', 'Apposer ma signature manuscrite (image)'], ['tampon', 'tampon', 'stamp', 'Tampon', 'Apposer mon tampon']]) {
+      const button = el('button', {
+        class: 'tool tool-image', type: 'button', 'aria-pressed': 'false', dataset: { tool: mode }, 'data-tip': label, 'aria-label': label,
+      }, iconEl(icon), el('span', { class: 'tool-label', text: short }));
+      button.addEventListener('click', () => { if (this.tools.tool === mode) this.tools.set('select'); else this.placeImage(slot); });
+      host.append(button);
+    }
   }
 
   bindChrome() {
@@ -1308,12 +1317,34 @@ class App {
   }
 
   async placeHandwritten() {
-    if (!this.settings?.has_signature_image) {
-      const ok = await this.drawSignature();
-      if (!ok) return;
-    }
+    return this.placeImage('signature');
+  }
+
+  // Signature manuscrite ou tampon : enregistré à la première utilisation, puis posé.
+  async placeImage(slot) {
+    if (!this.doc) return;
+    if (!this.hasImage(slot) && !(await this.registerImage(slot))) return;
     this.organizer.close();
-    this.tools.set('stamp');
+    this.tools.set(slot === 'tampon' ? 'tampon' : 'stamp');
+  }
+
+  hasImage(slot) {
+    return Boolean(this.settings?.images?.[slot]);
+  }
+
+  async registerImage(slot) {
+    const tampon = slot === 'tampon';
+    const buttons = [{ label: 'Annuler', value: null }];
+    if (!tampon) buttons.push({ label: 'Dessiner', value: 'draw' });
+    buttons.push({ label: 'Importer une image', value: 'import', kind: 'btn-primary', default: true });
+    const choice = await modal({
+      title: tampon ? 'Mon tampon' : 'Ma signature',
+      body: el('div', {}, etat('', 'Aucune image', 'Enregistrée sur ce poste, modifiable dans les Réglages')),
+      buttons,
+    });
+    if (choice === 'draw') return this.drawSignature();
+    if (choice === 'import') return this.importImage(slot);
+    return false;
   }
 
   async drawSignature() {
@@ -1360,38 +1391,78 @@ class App {
     });
     if (result !== 'ok') return false;
     const blob = await trimmedPng(canvas);
-    return this.uploadSignature(blob);
+    return this.uploadImage('signature', blob);
   }
 
   async importSignature() {
-    const input = el('input', { type: 'file', accept: 'image/png,image/jpeg' });
+    return this.importImage('signature');
+  }
+
+  // Tout format d'image (PNG, JPG, TIFF, BMP, GIF, WebP, JPEG 2000) : converti en PNG par le serveur.
+  async importImage(slot) {
+    const input = el('input', { type: 'file', accept: 'image/*,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.gif,.webp,.jp2,.jpx' });
     const file = await new Promise((resolve) => {
       input.addEventListener('change', () => resolve(input.files[0] || null));
       input.click();
     });
     if (!file) return false;
-    const bitmap = await createImageBitmap(file).catch(() => null);
-    if (!bitmap) {
-      toast('Image illisible.', 'error');
-      return false;
-    }
-    const scale = Math.min(1, 1200 / bitmap.width, 600 / bitmap.height);
-    const canvas = el('canvas', { width: String(Math.round(bitmap.width * scale)), height: String(Math.round(bitmap.height * scale)) });
-    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
-    return this.uploadSignature(blob);
+    return this.uploadImage(slot, file);
   }
 
-  async uploadSignature(blob) {
+  async uploadImage(slot, blob) {
+    const transparent = this.settings?.image_white_transparent !== false ? '1' : '0';
     try {
-      const data = await Api.upload('api/signature-image', blob, 'image/png');
+      const data = await Api.upload(`api/user-image/${slot}?transparent=${transparent}`, blob, blob.type || 'application/octet-stream');
       this.settings = data.settings;
-      toast('Image de signature enregistrée.', 'ok');
+      toast(slot === 'tampon' ? 'Tampon enregistré.' : 'Signature enregistrée.', 'ok');
       return true;
     } catch (err) {
       toast(err.message, 'error');
       return false;
     }
+  }
+
+  async deleteImage(slot) {
+    try {
+      const data = await Api.del(`api/user-image/${slot}`);
+      this.settings = data.settings;
+      return true;
+    } catch (err) {
+      toast(err.message, 'error');
+      return false;
+    }
+  }
+
+  // Aperçu, puis Dessiner (signature) / Importer ou Remplacer / Supprimer.
+  imageControls(slot, onChange) {
+    const wrap = el('div', { class: 'sig-preview' });
+    const render = () => {
+      wrap.textContent = '';
+      const has = this.hasImage(slot);
+      if (has) {
+        const img = el('img', { alt: slot === 'tampon' ? 'Tampon enregistré' : 'Signature enregistrée' });
+        img.src = `api/user-image/${slot}?t=${Date.now()}`;
+        wrap.append(img);
+      } else {
+        wrap.append(etat('', 'Aucune image'));
+      }
+      const changed = (ok) => { if (ok) { render(); onChange?.(); } };
+      if (slot === 'signature') {
+        const draw = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: has ? 'Refaire' : 'Dessiner' });
+        draw.addEventListener('click', async () => changed(await this.drawSignature()));
+        wrap.append(draw);
+      }
+      const load = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: has ? 'Remplacer' : 'Importer', 'data-tip': 'PNG, JPG, TIFF, BMP, GIF, WebP' });
+      load.addEventListener('click', async () => changed(await this.importImage(slot)));
+      wrap.append(load);
+      if (has) {
+        const remove = el('button', { class: 'btn btn-danger btn-sm', type: 'button', text: 'Supprimer' });
+        remove.addEventListener('click', async () => changed(await this.deleteImage(slot)));
+        wrap.append(remove);
+      }
+    };
+    render();
+    return wrap;
   }
 
   // --- Menus ---
@@ -1416,7 +1487,8 @@ class App {
       '-',
       { label: 'Commentaires', icon: 'comment', disabled: !doc, action: () => this.panel.open('comments') },
       ...(doc?.signed ? [{ label: 'Signatures du document', icon: 'shield', action: () => this.panel.open('signatures') }] : []),
-      { label: 'Apposer ma signature manuscrite', icon: 'image', disabled: !doc, action: () => this.placeHandwritten() },
+      { label: 'Apposer ma signature manuscrite', icon: 'pen', disabled: !doc, action: () => this.placeImage('signature') },
+      { label: 'Apposer mon tampon', icon: 'stamp', disabled: !doc, action: () => this.placeImage('tampon') },
       '-',
       { label: 'Réglages…', icon: 'settings', action: () => this.openSettings() },
       { label: 'À propos de DestriPDF', icon: 'info', action: () => this.about() },
@@ -1447,26 +1519,16 @@ class App {
     const tsa = el('input', { class: 'text-input', value: s.timestamp_url || '', placeholder: 'Facultatif', autocomplete: 'off', 'data-tip': 'Adresse du service d\'horodatage de votre autorité ; vide : pas d\'horodatage' });
     const ltv = el('input', { type: 'checkbox' });
     ltv.checked = s.sign_ltv !== false;
-    const imageControls = el('div', { class: 'sig-preview' });
-    const renderImage = () => {
-      imageControls.textContent = '';
-      if (this.settings?.has_signature_image) {
-        const img = el('img', { alt: 'Image de signature' });
-        img.src = `api/signature-image?t=${Date.now()}`;
-        const remove = el('button', { class: 'btn btn-danger btn-sm', type: 'button', text: 'Supprimer' });
-        remove.addEventListener('click', async () => {
-          const data = await Api.del('api/signature-image');
-          this.settings = data.settings;
-          renderImage();
-        });
-        imageControls.append(img, remove);
-      } else {
-        const draw = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: 'Dessiner' });
-        draw.addEventListener('click', async () => { if (await this.drawSignature()) renderImage(); });
-        imageControls.append(etat('', 'Aucune image'), draw);
+    const white = el('input', { type: 'checkbox' });
+    white.checked = s.image_white_transparent !== false;
+    white.addEventListener('change', async () => {
+      // Appliqué aux prochaines images importées : enregistré tout de suite.
+      try {
+        this.settings = (await Api.post('api/settings', { image_white_transparent: white.checked })).settings;
+      } catch (err) {
+        toast(err.message, 'error');
       }
-    };
-    renderImage();
+    });
     const body = el('div', {},
       el('label', { class: 'field-label', text: 'Auteur des annotations' }), author,
       el('label', { class: 'field-label spaced', text: 'Thème' }), theme,
@@ -1474,7 +1536,10 @@ class App {
       el('label', { class: 'check', 'data-tip': 'L\'état de révocation du certificat est demandé à votre autorité puis intégré au document, qui reste vérifiable après l\'expiration du certificat (Internet au moment de signer)' },
         ltv, el('span', { text: 'Validation à long terme (LTV)' })),
       el('label', { class: 'field-label spaced', text: 'Horodatage (TSA)' }), tsa,
-      el('label', { class: 'field-label spaced', text: 'Signature manuscrite' }), imageControls);
+      el('label', { class: 'field-label spaced', text: 'Signature manuscrite' }), this.imageControls('signature'),
+      el('label', { class: 'field-label spaced', text: 'Tampon' }), this.imageControls('tampon'),
+      el('label', { class: 'check spaced', 'data-tip': 'Images importées sans transparence : le blanc devient transparent et laisse voir le document' },
+        white, el('span', { text: 'Fond blanc transparent' })));
     const result = await modal({
       title: 'Réglages',
       body,

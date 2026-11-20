@@ -28,6 +28,10 @@ Inclus :
   révocation du certificat intégré au document (validation à long terme,
   « compatible LTV ») ; demande de Florent du 12 octobre après-midi ;
 - signature manuscrite simple (image), signalée comme sans valeur électronique ;
+- signature manuscrite et tampon en images (demande de Florent du 20 novembre
+  2026) : deux images distinctes, tout format d'image accepté, enregistrées à la
+  première utilisation, modifiables dans les Réglages, apposées d'un clic depuis
+  la barre d'outils ;
 - pages : pivoter, supprimer, déplacer, insérer depuis d'autres PDF ; plusieurs
   pages choisies (Ctrl+clic, Maj+clic, Ctrl+Maj+clic) déplacées ensemble par
   glisser, dans les vignettes comme dans la vue « Organiser » (toutes les pages
@@ -128,6 +132,17 @@ recomposition, horodatage par défaut (réglage facultatif), PAdES-LTA
   G4 sans rééchantillonnage ; objets dédoublonnés et regroupés (`garbage=4`,
   flux d'objets) ; mot de passe conservé. Copie gardée en mémoire jusqu'à la
   modification suivante (estimation puis enregistrement sans recalcul).
+- Images de l'utilisateur (`settings.USER_IMAGES`) : emplacements « signature »
+  (`signature.png`, fichier d'avant conservé) et « tampon » (`tampon.png`) dans
+  %APPDATA%\DestriPDF ; routes `api/user-image/(signature|tampon)` (GET, POST,
+  DELETE), emplacement choisi par une liste fermée. Toute image reconnue par
+  `image_kind` convertie en PNG par `user_image_png` sous `FITZ_LOCK` (EXIF
+  appliqué, transparence conservée, 1600 px et 2 Mo au plus) ; fond blanc d'une
+  image opaque rendu transparent si le réglage `image_white_transparent` est
+  actif. Apposée en annotation Stamp (`stamp_image`, champ `slot`) : MuPDF réduit
+  et centre l'image dans le cadre sans la déformer ; cadre par défaut aux
+  proportions de l'image. Le cadre de la signature électronique n'emploie que
+  l'image de signature.
 - Annotations sur page pivotée : coordonnées échangées dans l'espace affiché ;
   quadrilatères de surlignage transformés coin par coin ; image de signature
   pré-tournée ; texte libre composé avec `rotate`.
@@ -234,6 +249,11 @@ recomposition, horodatage par défaut (réglage facultatif), PAdES-LTA
 - Compression : texte, annotations, champs et mot de passe conservés, images à
   la résolution du niveau, document ouvert intact ; refus pour un document signé
   ou sans gain (tests, recette, fumée).
+- Signature et tampon : deux images indépendantes (supprimer l'une garde
+  l'autre) ; JPEG, PNG, TIFF acceptés et stockés en PNG, fichier illisible ou trop
+  gros refusé ; première utilisation : enregistrement demandé (dessin ou image
+  pour la signature, image pour le tampon) ; tampon carré posé carré, droit sur
+  une page pivotée ; Réglages : remplacer, supprimer (tests, recette).
 - Aucune release GitHub sans son installateur vérifié (`scripts\release.ps1`).
 - Jamais d'instance sans fenêtre : fenêtre absente après 20 s → relance unique,
   puis message et fin (tests, recette `surveillance_demarrage.py` sur

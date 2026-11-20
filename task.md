@@ -886,3 +886,61 @@ destricenter pour les applications : DestriPDF, DestriNote, Destriview », mené
   500, Barlow Condensed 500, Roboto 400 et 500.
 - [ ] Mouvements non regardés à l'œil sur un poste où Windows les laisse actifs.
 - [ ] Thème sombre : déclinaison propre à DestriPDF, à faire valider par Florent.
+
+## Signature manuscrite et tampon en images — 20 novembre 2026 (non publié)
+
+Demande de Florent : signer avec une image de signature et un tampon, tout format
+d'image, deux images distinctes faciles à apposer, enregistrées à la première
+utilisation et modifiables dans les paramètres.
+
+### Réalisé
+
+- [x] `document.user_image_png` : toute image reconnue (PNG, JPG, TIFF, BMP, GIF,
+  WebP, JPEG 2000) convertie en PNG sous `FITZ_LOCK`, orientation EXIF
+  appliquée, transparence conservée, 1600 px et 2 Mo au plus ; fond blanc d'une
+  image opaque rendu transparent (rampe 200–240) sur demande.
+- [x] `settings` : emplacements `signature` (`signature.png`, image existante
+  conservée) et `tampon` (`tampon.png`) ; tailles lues dans l'en-tête PNG
+  (`images`) ; réglage `image_white_transparent` (actif par défaut).
+- [x] Serveur : `api/user-image/(signature|tampon)` GET/POST/DELETE (remplace
+  `api/signature-image`), import jusqu'à 40 Mo avant conversion ; annotation
+  `stamp_image` avec `slot` contrôlé (`bad_slot`), libellés « Tampon » /
+  « Signature manuscrite », refus clair sans image.
+- [x] Interface : boutons « Signature » et « Tampon » dans la barre d'outils
+  (icône seule sous 1440 px), menu ⋯ et panneau Signer ; première utilisation :
+  boîte « Ma signature » (Dessiner, Importer une image) ou « Mon tampon »
+  (Importer une image) ; Réglages : aperçu, Refaire/Importer/Remplacer/Supprimer
+  pour chacune, case « Fond blanc transparent » ; cadre par défaut aux
+  proportions de l'image (MuPDF garde de toute façon les proportions).
+- [x] Vérifié : un cadre tracé large garde un tampon carré (image réduite et
+  centrée par `add_stamp_annot`, jamais déformée).
+
+### Validations
+
+- [x] Tests : 157 passés (nouveaux : routes des deux images avec refus 403, 400,
+  413, JPEG pivoté, TIFF au fond rendu transparent, indépendance des deux
+  images, `bad_slot`, `no_image` ; tampon carré droit sur page pivotée).
+- [x] Recette Edge : 49 parcours sur 49 (`recette_output\20261120-180916`),
+  nouveaux parcours : première signature (boîte puis dessin), tampon (annulation
+  de la première boîte, import JPEG, pose depuis la barre, proportions),
+  Réglages avec les deux images. Défaut trouvé et corrigé : barre d'outils
+  débordante de 66 px à 1280 px avec les deux libellés.
+
+### Reste à faire / limites
+
+- [x] Le cadre de la signature électronique (PAdES) n'emploie que l'image de
+  signature : décision de Florent (« non pas avec la clef »), le tampon reste une
+  image à part.
+- [x] « Importer une image » de la première utilisation, par vrais clics : le
+  sélecteur de fichiers est appelé avec l'activation utilisateur encore valide
+  (tampon et signature). Le dialogue Windows lui-même n'est pas ouvert en recette.
+- [x] `captures_charte.py` rejoué (dossier `charte` de la recette) : menu ⋯,
+  Réglages, Signer, en clair et en sombre ; aucun débordement, console propre.
+- [x] Version 1.8.0 (code, informations de l'exécutable, installateur, README).
+- [x] `build.ps1` : 157 tests ; première fumée 29/30 (capacités des pilotes
+  d'imprimante, échec passager : les cinq pilotes répondent ensuite en moins de
+  0,5 s), relancée avec `-SkipTests` : 30/30 ; installateur
+  `DestriPDF-1.8.0-installation.exe` (36 683 332 octets), SHA-256
+  `62E50045F5B0B59871C6FB13FE65CD5D5CC6FBFF961E2B1DD02E6A0444D53CD9`.
+- [x] Commit et push sur `main` à la demande de Florent (« tu commit et push puis
+  install l'app ») ; pas de release GitHub ni d'étiquette (non demandées).

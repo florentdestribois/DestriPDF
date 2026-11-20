@@ -932,6 +932,7 @@ class PdfSession:
         author = self._author(spec.get("author"))
         color = parse_color(spec.get("color"), (0.93, 0.76, 0.15) if kind == "highlight" else (0.16, 0.2, 0.23))
         width = max(0.25, min(float(spec.get("width") or 1.5), 24.0))
+        tampon = kind == "stamp_image" and spec.get("slot") == "tampon"
         created: dict = {}
 
         def apply():
@@ -982,7 +983,7 @@ class PdfSession:
                 rect = _to_unrot(page, spec["rect"])
                 image = spec.get("image")
                 if not image:
-                    raise DocumentError("Aucune image de signature enregistrée.", "no_image")
+                    raise DocumentError("Aucun tampon enregistré." if tampon else "Aucune image de signature enregistrée.", "no_image")
                 if page.rotation:
                     # L'apparence se dessine dans l'espace non pivoté : on pré-tourne
                     # l'image pour qu'elle s'affiche droite.
@@ -990,7 +991,7 @@ class PdfSession:
                 annot = page.add_stamp_annot(rect, stamp=image)
             else:
                 raise DocumentError("Type d'annotation inconnu.", "bad_type")
-            content = str(spec.get("content") or ("Signature manuscrite" if kind == "stamp_image" else ""))[:20000]
+            content = str(spec.get("content") or ((("Tampon" if tampon else "Signature manuscrite")) if kind == "stamp_image" else ""))[:20000]
             annot.set_info(title=author, content=content)
             annot.update()
             created["id"] = annot.xref
@@ -998,7 +999,7 @@ class PdfSession:
         labels = {
             "note": "Ajout d'une note", "freetext": "Ajout de texte", "highlight": "Surlignage",
             "underline": "Soulignement", "strikeout": "Texte barré", "ink": "Dessin", "rect": "Rectangle",
-            "ellipse": "Ellipse", "arrow": "Flèche", "stamp_image": "Signature manuscrite",
+            "ellipse": "Ellipse", "arrow": "Flèche", "stamp_image": "Tampon" if tampon else "Signature manuscrite",
         }
         self._mutate(labels.get(kind, "Annotation"), apply, [index])
         out = self.summary()
@@ -1482,6 +1483,60 @@ def image_to_pdf(data: bytes, name: str | None = None) -> bytes:
         return out.tobytes(garbage=3, deflate=True)
     finally:
         for doc in (out, conv, img):
+            if doc is not None:
+                doc.close()
+
+
+USER_IMAGE_SIDE = 1600
+USER_IMAGE_BYTES = 2 * 1024 * 1024
+
+
+def _white_to_alpha(pix: fitz.Pixmap) -> None:
+    """Fond blanc d'une image opaque rendu transparent (rampe douce entre gris
+    très clair et blanc, bords sans crénelage). `pix` est en RVB avec alpha."""
+    gray = fitz.Pixmap(fitz.csGRAY, fitz.Pixmap(pix, 0))
+    table = bytes(255 if v <= 200 else 0 if v >= 240 else round(255 * (240 - v) / 40) for v in range(256))
+    pix.set_alpha(gray.samples.translate(table))
+
+
+def user_image_png(data: bytes, *, transparent_white: bool = False) -> tuple[bytes, int, int]:
+    """Image de signature ou de tampon à enregistrer : tout format reconnu
+    (`image_kind`) converti en PNG, orientation de l'appareil photo appliquée,
+    transparence conservée, réduite à 1600 px de côté (et sous 2 Mo). Fond blanc
+    rendu transparent sur demande, seulement pour une image sans transparence.
+    Rend (png, largeur, hauteur). Appelé sous FITZ_LOCK."""
+    kind = image_kind(data)
+    if kind is None:
+        raise DocumentError("Format d'image non reconnu.", "not_image")
+    img = conv = None
+    try:
+        try:
+            img = fitz.open(stream=bytes(data), filetype=kind)
+            conv = fitz.open("pdf", img.convert_to_pdf(0, 1))
+            page = conv[0]
+        except Exception as exc:  # noqa: BLE001
+            raise DocumentError(f"Image illisible ({kind.upper()}).", "bad_image") from exc
+        try:
+            native = fitz.Pixmap(bytes(data))
+            native_side = max(native.width, native.height)
+        except Exception:  # noqa: BLE001 — format lu par le document seulement (WebP)
+            native_side = USER_IMAGE_SIDE
+        long_pt = max(page.rect.width, page.rect.height)
+        if long_pt <= 0:
+            raise DocumentError(f"Image illisible ({kind.upper()}).", "bad_image")
+        side = min(USER_IMAGE_SIDE, native_side)
+        while True:
+            zoom = side / long_pt
+            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=True)
+            opaque = min(pix.samples[3::4], default=255) == 255
+            if transparent_white and opaque:
+                _white_to_alpha(pix)
+            png = pix.tobytes("png")
+            if len(png) <= USER_IMAGE_BYTES or side <= 200:
+                return png, pix.width, pix.height
+            side = int(side * 0.7)
+    finally:
+        for doc in (conv, img):
             if doc is not None:
                 doc.close()
 

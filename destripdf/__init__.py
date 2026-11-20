@@ -1,6 +1,6 @@
 """DestriPDF : lecture, modification, annotation et signature de documents PDF."""
 
-__version__ = "1.7.0"
+__version__ = "1.8.0"
 APP_NAME = "DestriPDF"
 
 # Images ouvertes, ajoutées ou assemblées comme des pages PDF (sans charger MuPDF au démarrage).

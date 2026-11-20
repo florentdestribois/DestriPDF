@@ -543,17 +543,57 @@ def test_upload_and_errors(server):
     assert status == 400 and data["code"] == "bad_request"
 
 
-def test_signature_image_settings(server):
-    status, data = request(server, "GET", "api/signature-image")
-    assert status == 404
-    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 20, 10), False)
-    png = pix.tobytes("png")
+def test_user_images_signature_and_tampon(server, tmp_path):
+    """Signature et tampon : deux images distinctes, tout format converti en PNG."""
+    for slot in ("signature", "tampon"):
+        assert request(server, "GET", f"api/user-image/{slot}")[0] == 404
+    assert request(server, "GET", "api/user-image/autre")[0] == 404
+    # refus : mutation sans en-tête, sans image, image illisible, trop volumineuse
+    assert request(server, "POST", "api/user-image/tampon", samples.png_image(), headers={"X-DestriPDF": "0"})[0] == 403
+    assert request(server, "DELETE", "api/user-image/tampon", headers={"X-DestriPDF": "0"})[0] == 403
+    status, data = request(server, "POST", "api/user-image/tampon", b"pas une image")
+    assert status == 400 and data["code"] == "bad_image"
+    status, data = request(server, "POST", "api/user-image/tampon", b"\xff\xd8\xff" + b"\x00" * 64)
+    assert status == 400 and data["code"] == "bad_image"
     port = server.server_address[1]
-    conn = http.client.HTTPConnection("127.0.0.1", port)
-    conn.request("POST", f"/{server.token}/api/signature-image", body=png,
-                 headers={"Host": f"127.0.0.1:{port}", "X-DestriPDF": "1", "Content-Type": "image/png"})
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+    conn.putrequest("POST", f"/{server.token}/api/user-image/tampon", skip_host=True)
+    for name, value in (("Host", f"127.0.0.1:{port}"), ("X-DestriPDF", "1"), ("Content-Length", str(41 * 1024 * 1024))):
+        conn.putheader(name, value)
+    conn.endheaders()  # taille annoncée seulement : refus avant lecture du corps
     resp = conn.getresponse()
-    assert resp.status == 200 and json.loads(resp.read())["settings"]["has_signature_image"]
+    assert resp.status == 413 and json.loads(resp.read())["code"] == "too_large"
+    conn.close()
+    # signature en JPEG (photo pivotée par l'appareil), tampon en TIFF opaque, fond rendu transparent
+    status, data = request(server, "POST", "api/user-image/signature", samples.jpeg_photo(400, 200, orientation=6))
+    assert status == 200 and data["settings"]["images"]["signature"] == [200, 400]
+    assert not data["settings"]["has_tampon_image"]
+    tiff = samples.tiff_pages([(300, 300, (255, 255, 255), 96)])
+    status, data = request(server, "POST", "api/user-image/tampon?transparent=1", tiff)
+    assert status == 200 and data["settings"]["has_tampon_image"] and data["settings"]["has_signature_image"]
+    resp, png = request(server, "GET", "api/user-image/tampon", raw=True)
+    assert resp.getheader("Content-Type") == "image/png" and png.startswith(b"\x89PNG")
+    pix = fitz.Pixmap(png)
+    assert pix.alpha and max(pix.samples[3::4]) == 0  # fond blanc transparent
+    resp, png = request(server, "GET", "api/user-image/signature", raw=True)
+    assert fitz.Pixmap(png).samples[3::4].count(255) == 200 * 400  # sans option : opaque
+    # chaque image s'appose avec son propre libellé
+    source = tmp_path / "devis.pdf"
+    source.write_bytes(samples.quote_pdf())
+    assert request(server, "POST", "api/open", {"path": str(source)})[0] == 200
+    status, data = request(server, "POST", "api/annot/add", {"page": 0, "annot": {"type": "stamp_image", "slot": "tampon", "rect": [100, 100, 220, 220]}})
+    assert status == 200
+    status, data = request(server, "POST", "api/annot/add", {"page": 0, "annot": {"type": "stamp_image", "rect": [300, 100, 400, 300]}})
+    assert status == 200
+    status, data = request(server, "POST", "api/annot/add", {"page": 0, "annot": {"type": "stamp_image", "slot": "../x", "rect": [0, 0, 50, 50]}})
+    assert status == 400 and data["code"] == "bad_slot"
+    contents = [a["content"] for a in server.app.session.annotations(0) if a["type"] == "Stamp"]
+    assert sorted(contents) == ["Signature manuscrite", "Tampon"]
+    # supprimer l'une garde l'autre ; tampon absent : refus clair
+    status, data = request(server, "DELETE", "api/user-image/tampon")
+    assert status == 200 and not data["settings"]["has_tampon_image"] and data["settings"]["has_signature_image"]
+    status, data = request(server, "POST", "api/annot/add", {"page": 0, "annot": {"type": "stamp_image", "slot": "tampon", "rect": [100, 400, 200, 500]}})
+    assert status == 400 and data["code"] == "no_image" and "tampon" in data["error"].lower()
     status, data = request(server, "POST", "api/settings", {"author": "Florent", "timestamp_url": "ftp://x"})
     assert status == 400 and data["code"] == "bad_setting"
     status, data = request(server, "POST", "api/settings", {"author": "Florent", "theme": "dark"})

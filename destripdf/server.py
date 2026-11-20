@@ -33,6 +33,7 @@ log = logging.getLogger("destripdf")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 MAX_JSON = 4 * 1024 * 1024
 MAX_UPLOAD = 1024 * 1024 * 1024
+USER_IMAGE_UPLOAD = 40 * 1024 * 1024  # image de signature ou de tampon avant conversion
 MAX_FILES = 100  # PDF ajoutés ou assemblés en une fois
 RENDER_CACHE_BYTES = 160 * 1024 * 1024
 API_HEADER = "X-DestriPDF"
@@ -657,7 +658,11 @@ class Handler(BaseHTTPRequestHandler):
         session = self.app.require_session()
         spec = dict(body.get("annot") or {})
         if spec.get("type") == "stamp_image":
-            spec["image"] = self.app.settings.signature_image()
+            slot = spec.get("slot") or "signature"
+            if slot not in ("signature", "tampon"):
+                raise ApiError("Image inconnue.", "bad_slot")
+            spec["slot"] = slot
+            spec["image"] = self.app.settings.user_image(slot)
         if not spec.get("author"):
             spec["author"] = self.app.settings.get("author")
         summary = session.add_annotation(int(body["page"]), spec)
@@ -1226,22 +1231,32 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as err:
             raise ApiError(str(err), "bad_setting")
 
-    def api_signature_image_get(self, query):
-        data = self.app.settings.signature_image()
+    def api_user_image_get(self, query, slot):
+        data = self.app.settings.user_image(slot)
         if data is None:
-            self._error(HTTPStatus.NOT_FOUND, "Aucune image de signature.", "no_image")
+            self._error(HTTPStatus.NOT_FOUND, "Aucune image enregistrée.", "no_image")
             return
         self._send(200, data, "image/png", {"Cache-Control": "no-store"})
 
-    def api_signature_image_set(self, query):
+    def api_user_image_set(self, query, slot):
+        """Image de signature ou de tampon : tout format d'image, convertie en PNG."""
+        from .document import FITZ_LOCK, DocumentError, user_image_png
+
+        raw = self._body(USER_IMAGE_UPLOAD)
+        transparent = (query.get("transparent") or ["0"])[0] == "1"
         try:
-            self.app.settings.set_signature_image(self._body(2 * 1024 * 1024 + 1))
+            with FITZ_LOCK:
+                png, _w, _h = user_image_png(raw, transparent_white=transparent)
+        except DocumentError as err:
+            raise ApiError(str(err), "bad_image")
+        try:
+            self.app.settings.set_user_image(slot, png)
         except ValueError as err:
             raise ApiError(str(err), "bad_image")
         self._json({"settings": self.app.settings.public()})
 
-    def api_signature_image_delete(self, query):
-        self.app.settings.delete_signature_image()
+    def api_user_image_delete(self, query, slot):
+        self.app.settings.delete_user_image(slot)
         self._json({"settings": self.app.settings.public()})
 
     # -- application --
@@ -1306,9 +1321,9 @@ for _method, _pattern, _name in (
     ("POST", r"api/sign", "api_sign"),
     ("GET", r"api/settings", "api_settings_get"),
     ("POST", r"api/settings", "api_settings_set"),
-    ("GET", r"api/signature-image", "api_signature_image_get"),
-    ("POST", r"api/signature-image", "api_signature_image_set"),
-    ("DELETE", r"api/signature-image", "api_signature_image_delete"),
+    ("GET", r"api/user-image/(signature|tampon)", "api_user_image_get"),
+    ("POST", r"api/user-image/(signature|tampon)", "api_user_image_set"),
+    ("DELETE", r"api/user-image/(signature|tampon)", "api_user_image_delete"),
     ("POST", r"api/quit", "api_quit"),
 ):
     _route(_method, _pattern, _name)

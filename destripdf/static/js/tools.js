@@ -6,6 +6,13 @@ import { el, etat, iconEl, toast, formatDate, clamp } from './ui.js';
 import { Viewer, BASE } from './viewer.js';
 
 // `short` : libellé de la barre d'outils ; `label` : nom complet (infobulle, barre d'options).
+// Taille d'un cadre aux proportions de l'image (largeur, hauteur) tenant dans `box`.
+function imageBox(size, box) {
+  if (!size || !size[0] || !size[1]) return box;
+  const k = Math.min(box[0] / size[0], box[1] / size[1]);
+  return [Math.max(24, size[0] * k), Math.max(24, size[1] * k)];
+}
+
 export const TOOLS = [
   { id: 'select', short: 'Sélection', label: 'Sélection', icon: 'select', key: 'v' },
   { id: 'edit', short: 'Modifier', label: 'Modifier le texte', icon: 'edit', key: 'e' },
@@ -17,7 +24,7 @@ export const TOOLS = [
   { id: 'erase', short: 'Effacer', label: 'Effacer une zone', icon: 'erase', key: 'x' },
 ];
 
-const MODES = ['select', 'edit', 'text', 'note', 'highlight', 'draw', 'shape', 'erase', 'sign', 'stamp'];
+const MODES = ['select', 'edit', 'text', 'note', 'highlight', 'draw', 'shape', 'erase', 'sign', 'stamp', 'tampon'];
 
 const COLORS = {
   highlight: [['#f5d04a', 'Jaune'], ['#9fe08a', 'Vert'], ['#8fd3f4', 'Bleu'], ['#f7a8c6', 'Rose'], ['#f6b26b', 'Orange']],
@@ -83,7 +90,7 @@ export class ToolManager extends EventTarget {
     this.tool = tool;
     document.body.classList.remove(...MODES.map((m) => `mode-${m}`));
     document.body.classList.add(`mode-${tool}`);
-    for (const button of document.querySelectorAll('#tools .tool')) {
+    for (const button of document.querySelectorAll('.toolbar .tool[data-tool]')) {
       button.setAttribute('aria-pressed', String(button.dataset.tool === tool));
     }
     if (tool !== 'select') this.deselect();
@@ -134,7 +141,7 @@ export class ToolManager extends EventTarget {
     // Le mode d'emploi de l'outil tient dans l'infobulle de son titre, jamais à l'écran.
     let title = null;
     const hint = (text) => { if (title) title.dataset.tip = text; return null; };
-    const names = { sign: 'Cadre de signature', stamp: 'Signature manuscrite' };
+    const names = { sign: 'Cadre de signature', stamp: 'Signature manuscrite', tampon: 'Tampon' };
     const name = names[this.tool] || TOOLS.find((t) => t.id === this.tool)?.label;
     if (this.tool !== 'select' && name) {
       const done = el('button', { class: 'btn btn-ghost btn-sm', type: 'button', 'data-tip': 'Revenir à la sélection (Échap)', text: 'Terminé' });
@@ -180,6 +187,9 @@ export class ToolManager extends EventTarget {
         break;
       case 'stamp':
         add(hint('Cliquez ou tracez un cadre pour apposer votre signature manuscrite.'));
+        break;
+      case 'tampon':
+        add(hint('Cliquez ou tracez un cadre pour apposer votre tampon.'));
         break;
       default:
         break;
@@ -460,7 +470,8 @@ export class ToolManager extends EventTarget {
       case 'shape':
       case 'erase':
       case 'sign':
-      case 'stamp': {
+      case 'stamp':
+      case 'tampon': {
         event.preventDefault();
         event.target.setPointerCapture?.(event.pointerId);
         let preview;
@@ -513,7 +524,7 @@ export class ToolManager extends EventTarget {
       this.drawPath();
       return;
     }
-    if (['shape', 'erase', 'sign', 'stamp'].includes(press.kind)) {
+    if (['shape', 'erase', 'sign', 'stamp', 'tampon'].includes(press.kind)) {
       press.end = this.viewer.pointInView(press.view, event.clientX, event.clientY);
       this.updateDraft();
     }
@@ -576,9 +587,13 @@ export class ToolManager extends EventTarget {
           return;
         }
         this.setSignFrame(view.index, frame.map(round));
-      } else if (press.kind === 'stamp') {
-        const frame = small ? this.defaultRect(view, press.start, 170, 60) : rect;
-        const data = await Api.post('api/annot/add', { page: view.index, annot: { type: 'stamp_image', rect: frame.map(round) } });
+      } else if (press.kind === 'stamp' || press.kind === 'tampon') {
+        // Cadre par défaut aux proportions de l'image ; un cadre tracé garde lui aussi
+        // les proportions (image réduite et centrée par MuPDF, jamais déformée).
+        const slot = press.kind === 'tampon' ? 'tampon' : 'signature';
+        const [w, h] = imageBox(this.app.settings?.images?.[slot], slot === 'tampon' ? [130, 130] : [170, 70]);
+        const frame = small ? this.defaultRect(view, press.start, w, h) : rect;
+        const data = await Api.post('api/annot/add', { page: view.index, annot: { type: 'stamp_image', slot, rect: frame.map(round) } });
         await this.app.applyDoc(data.doc, { waitPage: view.index });
         this.set('select');
       }

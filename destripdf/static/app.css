@@ -240,6 +240,8 @@ body.no-doc .needs-doc-area, body.no-doc .sidebar { display: none !important; }
 @keyframes cote-in { from { opacity: 0; transform: scaleX(.6); } to { opacity: 1; transform: none; } }
 .tool .tool-label { display: inline; }
 @media (max-width: 1100px) { .tool .tool-label { display: none; } .tool { padding: 0 8px; } }
+/* Signature et tampon : icône seule tant que la barre manque de place. */
+@media (max-width: 1439px) { .tool-image .tool-label { display: none; } .tool.tool-image { padding: 0 8px; } }
 .nav-pill {
   position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 12;
   display: flex; align-items: center; gap: 2px; padding: 4px 6px; white-space: nowrap;
@@ -382,7 +384,7 @@ body.no-doc .needs-doc-area, body.no-doc .sidebar { display: none !important; }
 .search-hit.current { background: rgba(174,147,103,.75); box-shadow: 0 0 0 1.5px #2e3544; }
 .tool-layer { z-index: 5; pointer-events: none; }
 .mode-text .tool-layer, .mode-note .tool-layer, .mode-draw .tool-layer, .mode-shape .tool-layer,
-.mode-erase .tool-layer, .mode-sign .tool-layer, .mode-stamp .tool-layer { pointer-events: auto; cursor: crosshair; }
+.mode-erase .tool-layer, .mode-sign .tool-layer, .mode-stamp .tool-layer, .mode-tampon .tool-layer { pointer-events: auto; cursor: crosshair; }
 .mode-text .tool-layer { cursor: text; }
 .mode-note .tool-layer { cursor: copy; }
 .mode-highlight .page { cursor: text; }
