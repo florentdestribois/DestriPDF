@@ -943,4 +943,13 @@ utilisation et modifiables dans les paramètres.
   `DestriPDF-1.8.0-installation.exe` (36 683 332 octets), SHA-256
   `62E50045F5B0B59871C6FB13FE65CD5D5CC6FBFF961E2B1DD02E6A0444D53CD9`.
 - [x] Commit et push sur `main` à la demande de Florent (« tu commit et push puis
-  install l'app ») ; pas de release GitHub ni d'étiquette (non demandées).
+  install l'app ») : commit `c6f436f`.
+- [ ] Installation sur le poste : bloquée. L'installateur silencieux s'arrête
+  (code 5) car une instance DestriPDF 1.7.0 sans fenêtre (lancée le 18/11) ne se
+  ferme pas, même par « Fin de tâche » ; l'installation manuelle n'a rien changé
+  (Program Files et registre en 1.7.0). À reprendre après un redémarrage.
+- [x] Release `v1.8.0` publiée le 21 novembre à la demande de Florent (« la 1.8
+  n'est pas push sur github ») par `scripts\release.ps1 -Publish` : 157 tests,
+  fumée 30/30, étiquette `v1.8.0` poussée, installateur joint, SHA-256
+  `9AE4868E42F45034755A3D60FDA9B70E4B82D034AEA08C35EE2AA1DCB7E56327`
+  (https://github.com/florentdestribois/DestriPDF/releases/tag/v1.8.0).
